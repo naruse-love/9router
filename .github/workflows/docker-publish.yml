@@ -2,6 +2,8 @@ name: Build and Push Docker Image
 
 on:
   push:
+    branches:
+      - "master"
     tags:
       - "v*"
   workflow_dispatch:
@@ -43,16 +45,17 @@ jobs:
       ghcr_image: ${{ steps.release.outputs.ghcr_image }}
 
     steps:
-      - name: Check out release tag
+      - name: Check out target ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref_name }}
+          ref: ${{ inputs.release_tag || github.sha }}
           fetch-depth: 1
 
-      - name: Validate tag and package versions
+      - name: Validate release tag or branch push
         id: release
         env:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          REF_TYPE: ${{ github.event_name == 'workflow_dispatch' && 'tag' || github.ref_type }}
           REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           PROMOTE_LATEST_INPUT: ${{ inputs.promote_latest && 'true' || 'false' }}
@@ -61,56 +64,66 @@ jobs:
           const fs = require("fs");
           const { execFileSync } = require("child_process");
 
-          const tag = process.env.RELEASE_TAG || "";
-          const match = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/.exec(tag);
-
-          if (tag.includes("+")) {
-            console.error(`Build metadata is not supported in Docker release tags: ${tag}`);
-            process.exit(1);
-          }
-
-          if (!match) {
-            console.error(`Expected a Docker-safe semver tag like v0.5.81 or v0.5.81-rc.1, received: ${tag || "<empty>"}`);
-            process.exit(1);
-          }
-
-          const version = match[1];
-          if (version.length > 128 || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version)) {
-            console.error(`Version is not a valid Docker tag: ${version}`);
-            process.exit(1);
-          }
-
-          const prerelease = version.includes("-")
-            ? version.slice(version.indexOf("-") + 1).split(".")
-            : [];
-          for (const identifier of prerelease) {
-            if (/^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0")) {
-              console.error(`Numeric prerelease identifiers cannot contain leading zeroes: ${identifier}`);
+          function validateSemverTag(tag) {
+            const match = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/.exec(tag);
+            if (tag.includes("+")) {
+              console.error(`Build metadata is not supported in Docker release tags: ${tag}`);
               process.exit(1);
             }
-          }
-
-          const rootVersion = require("./package.json").version;
-          const cliVersion = require("./cli/package.json").version;
-
-          if (rootVersion !== version) {
-            console.error(`package.json version ${rootVersion} does not match tag ${tag}`);
-            process.exit(1);
-          }
-
-          if (cliVersion !== version) {
-            console.error(`cli/package.json version ${cliVersion} does not match tag ${tag}`);
-            process.exit(1);
+            if (!match) {
+              console.error(`Expected a Docker-safe semver tag like v0.5.81 or v0.5.81-rc.1, received: ${tag || "<empty>"}`);
+              process.exit(1);
+            }
+            const version = match[1];
+            if (version.length > 128 || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(version)) {
+              console.error(`Version is not a valid Docker tag: ${version}`);
+              process.exit(1);
+            }
+            const prerelease = version.includes("-") ? version.slice(version.indexOf("-") + 1).split(".") : [];
+            for (const identifier of prerelease) {
+              if (/^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0")) {
+                console.error(`Numeric prerelease identifiers cannot contain leading zeroes: ${identifier}`);
+                process.exit(1);
+              }
+            }
+            const rootVersion = require("./package.json").version;
+            const cliVersion = require("./cli/package.json").version;
+            if (rootVersion !== version) {
+              console.error(`package.json version ${rootVersion} does not match tag ${tag}`);
+              process.exit(1);
+            }
+            if (cliVersion !== version) {
+              console.error(`cli/package.json version ${cliVersion} does not match tag ${tag}`);
+              process.exit(1);
+            }
+            return version;
           }
 
           const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-          const publishDockerHub = process.env.REPOSITORY === "decolua/9router";
+          const isBranchPush = process.env.EVENT_NAME === "push" && process.env.REF_TYPE === "branch";
           const ghcrImage = `ghcr.io/${process.env.REPOSITORY.toLowerCase()}`;
-          const isPrerelease = version.includes("-");
-          const promoteLatest = (process.env.EVENT_NAME === "push" && !isPrerelease)
-            || process.env.PROMOTE_LATEST_INPUT === "true";
-          const output = process.env.GITHUB_OUTPUT;
 
+          let tag;
+          let version;
+          let publishDockerHub;
+          let promoteLatest;
+
+          if (isBranchPush) {
+            const branch = process.env.RELEASE_TAG || "master";
+            tag = branch;
+            version = `sha-${commit.slice(0, 7)}`;
+            publishDockerHub = false;
+            promoteLatest = branch === "master";
+          } else {
+            tag = process.env.RELEASE_TAG || "";
+            version = validateSemverTag(tag);
+            publishDockerHub = process.env.REPOSITORY === "decolua/9router";
+            const isPrerelease = version.includes("-");
+            promoteLatest = (process.env.EVENT_NAME === "push" && !isPrerelease)
+              || process.env.PROMOTE_LATEST_INPUT === "true";
+          }
+
+          const output = process.env.GITHUB_OUTPUT;
           fs.appendFileSync(output, `tag=${tag}\n`);
           fs.appendFileSync(output, `version=${version}\n`);
           fs.appendFileSync(output, `commit=${commit}\n`);
@@ -118,7 +131,7 @@ jobs:
           fs.appendFileSync(output, `promote_latest=${promoteLatest}\n`);
           fs.appendFileSync(output, `ghcr_image=${ghcrImage}\n`);
 
-          console.log(`Validated ${tag} at ${commit}`);
+          console.log(`Validated ${tag} (${version}) at ${commit}`);
           console.log(`latest promotion: ${promoteLatest ? "enabled" : "disabled"}`);
           NODE
 
