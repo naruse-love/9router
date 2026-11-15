@@ -213,4 +213,76 @@ describe("fusion combo", () => {
     // Flattened tool_result
     expect(panelBody.messages[2].content).toBe("[Tool result: done]");
   });
+
+  it("returns 499 immediately without invoking judge or single-model fallback when a panel leg returns 499 alongside a 200 sibling", async () => {
+    const aborted499 = new Response(JSON.stringify({ error: { message: "Client closed request" } }), {
+      status: 499,
+      headers: { "content-type": "application/json" },
+    });
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "gemini/gemini-2.5-flash") return aborted499;
+      return okResponse("sibling-ok");
+    });
+
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["gemini/gemini-2.5-flash", "openai/gpt-4o"],
+      handleSingleModel,
+      log,
+      comboName: "fusion-abort",
+      judgeModel: "p/judge",
+    });
+
+    expect(res).toBe(aborted499);
+    expect(res.status).toBe(499);
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+    expect(handleSingleModel.mock.calls.every(([, m, isPanel]) => isPanel === true && m !== "p/judge")).toBe(true);
+  });
+
+  it("returns 499 instead of 503 when a panel leg throws AbortError and siblings fail", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "gemini/gemini-2.5-flash") {
+        throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
+      }
+      return errResponse(500);
+    });
+
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["gemini/gemini-2.5-flash", "openai/gpt-4o"],
+      handleSingleModel,
+      log,
+      comboName: "fusion-throw-abort",
+    });
+
+    expect(res.status).toBe(499);
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+  });
+
+  it("finishes fusion early without waiting for straggler or hard timeout when a panel leg returns 499", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "gemini/gemini-2.5-flash") {
+        await new Promise((r) => setTimeout(r, 10));
+        return new Response(JSON.stringify({ error: { message: "Client closed request" } }), {
+          status: 499,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Promise(() => {});
+    });
+
+    const start = Date.now();
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["gemini/gemini-2.5-flash", "openai/gpt-4o"],
+      handleSingleModel,
+      log,
+      comboName: "fusion-fast-abort",
+      tuning: { panelHardTimeoutMs: 5000, stragglerGraceMs: 2000 },
+    });
+    const elapsed = Date.now() - start;
+
+    expect(res.status).toBe(499);
+    expect(elapsed).toBeLessThan(1000);
+  });
 });

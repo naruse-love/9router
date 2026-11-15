@@ -27,6 +27,12 @@ export function getQuotaCooldown(backoffLevel = 0) {
  * this request, so combo rotation must still try the next member.
  */
 export function checkFallbackError(status, errorText, backoffLevel = 0, provider = null) {
+  // Client closed request (abort) — never cool down the credential and never mark
+  // as requestScoped (which would cause combo fallback to try subsequent members).
+  if (Number(status) === 499) {
+    return { shouldFallback: false, cooldownMs: 0 };
+  }
+
   const lowerError = errorText
     ? (typeof errorText === "string" ? errorText : JSON.stringify(errorText)).toLowerCase()
     : "";
@@ -66,7 +72,7 @@ export function checkFallbackError(status, errorText, backoffLevel = 0, provider
   // same limit. Hand the upstream error back for this request instead.
   // Account-scoped statuses keep their rules above (401/402/403/404/429), and the
   // text rules still win for rate-limit / quota / capacity wording.
-  if (status >= 400 && status < 500 && status !== 401 && status !== 402 && status !== 403 && status !== 429) {
+  if (status >= 400 && status < 500 && status !== 401 && status !== 402 && status !== 403 && status !== 429 && status !== 499) {
     return { shouldFallback: false, cooldownMs: 0, requestScoped: true };
   }
 

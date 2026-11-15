@@ -13,6 +13,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { handleComboChat } from "../../open-sse/services/combo.js";
 import { checkFallbackError } from "../../open-sse/services/accountFallback.js";
+import {
+  getStickyComboModel,
+  setStickyComboModel,
+  resetStickyComboStore,
+} from "../../open-sse/services/systemoneRouter.js";
 
 const silentLog = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
 
@@ -105,5 +110,71 @@ describe("combo fallback — request-scoped 4xx from a member", () => {
     const body = await result.json();
     expect(body.error.message).toBe("Request validation failed");
     expect(handleSingleModel).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops immediately and returns 499 without trying subsequent members on client disconnect", async () => {
+    const abortedResponse = jsonResponse({ error: { message: "Client closed request" } }, 499);
+    const handleSingleModel = vi.fn(async () => abortedResponse);
+
+    const result = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["gemini/gemini-2.5-flash", "openai/gpt-4o"],
+      handleSingleModel,
+      log: silentLog,
+      comboStrategy: "fallback",
+    });
+
+    expect(result).toBe(abortedResponse);
+    expect(result.status).toBe(499);
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(handleSingleModel.mock.calls[0][1]).toBe("gemini/gemini-2.5-flash");
+  });
+
+  it("preserves smart-router sticky session when a member returns 499", async () => {
+    resetStickyComboStore();
+    const models = ["gemini/gemini-2.5-flash", "openai/gpt-4o"];
+    setStickyComboModel("smart-gem", "sess-499", "gemini/gemini-2.5-flash");
+
+    const abortedResponse = jsonResponse({ error: { message: "Client closed request" } }, 499);
+    const handleSingleModel = vi.fn(async () => abortedResponse);
+
+    const result = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models,
+      handleSingleModel,
+      log: silentLog,
+      comboName: "smart-gem",
+      comboStrategy: "smart",
+      sessionId: "sess-499",
+    });
+
+    expect(result).toBe(abortedResponse);
+    expect(result.status).toBe(499);
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(getStickyComboModel("smart-gem", "sess-499", models)).toBe("gemini/gemini-2.5-flash");
+  });
+
+  it("stops immediately with 499 and preserves smart sticky session when a member throws AbortError", async () => {
+    resetStickyComboStore();
+    const models = ["gemini/gemini-2.5-flash", "openai/gpt-4o"];
+    setStickyComboModel("smart-gem", "sess-abort-err", "gemini/gemini-2.5-flash");
+
+    const handleSingleModel = vi.fn(async () => {
+      throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+    });
+
+    const result = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models,
+      handleSingleModel,
+      log: silentLog,
+      comboName: "smart-gem",
+      comboStrategy: "smart",
+      sessionId: "sess-abort-err",
+    });
+
+    expect(result.status).toBe(499);
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(getStickyComboModel("smart-gem", "sess-abort-err", models)).toBe("gemini/gemini-2.5-flash");
   });
 });

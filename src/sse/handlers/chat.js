@@ -28,6 +28,8 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
+import { resolveProviderId } from "@/shared/constants/providers";
+import { isGeminiRotationProvider, runGeminiRotation } from "../services/geminiRotation.js";
 
 /**
  * Handle chat completion request
@@ -38,7 +40,11 @@ export async function handleChat(request, clientRawRequest = null) {
   let body;
   try {
     body = await request.json();
-  } catch {
+  } catch (err) {
+    if (request?.signal?.aborted || err?.name === "AbortError") {
+      log.info("CHAT", "Client aborted before request body parsed");
+      return errorResponse(499, "Client closed request");
+    }
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
@@ -270,32 +276,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
-  // Try with available accounts (fallback on errors)
-  const excludeConnectionIds = new Set();
-  let lastError = null;
-  let lastStatus = null;
-  let lastHeaders = null;
-
-  while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
-
-    // All accounts unavailable
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman, lastHeaders);
-      }
-      if (excludeConnectionIds.size === 0) {
-        log.warn("AUTH", `No active credentials for provider: ${provider}`);
-        return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
-      }
-      log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable", lastHeaders);
-    }
-
-    // Account selection shown in the unified "▶" line (acc:...)
+  const runChatCore = async (credentials, { skipClearAccountError = false } = {}) => {
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
@@ -308,7 +289,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
     }
 
-    // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     const result = await handleChatCore({
@@ -343,6 +323,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       providerOverrides: (chatSettings.providerOverrides || {})[provider] || null,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
+      clientSignal: request?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
@@ -351,11 +332,82 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         });
       },
       onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials, model);
+        if (!skipClearAccountError) {
+          await clearAccountError(credentials.connectionId, credentials, model);
+        }
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
       }
     });
+    return { result, refreshedCredentials };
+  };
+
+  const resolvedProvider = resolveProviderId(provider);
+  if (isGeminiRotationProvider(resolvedProvider)) {
+    const outcome = await runGeminiRotation({
+      providerId: resolvedProvider,
+      model,
+      signal: request?.signal || null,
+      log,
+      attempt: async (credentials) => {
+        const { result } = await runChatCore(credentials, { skipClearAccountError: true });
+        if (result.success) {
+          return { ok: true, response: result.response };
+        }
+        return {
+          ok: false,
+          status: result.status ?? result.response?.status,
+          errorText: result.error || "",
+          response: result.response,
+        };
+      },
+    });
+
+    if (outcome.status === "ok") {
+      return outcome.response;
+    }
+    if (outcome.status === "aborted") {
+      return errorResponse(499, "Client closed request");
+    }
+    if (outcome.status === "noCredentials") {
+      log.warn("AUTH", `No active credentials for provider: ${resolvedProvider}`);
+      return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${resolvedProvider}`);
+    }
+    if (outcome.response) {
+      return outcome.response;
+    }
+    return errorResponse(
+      outcome.httpStatus || HTTP_STATUS.SERVICE_UNAVAILABLE,
+      outcome.errorText || "All accounts unavailable"
+    );
+  }
+
+  // Try with available accounts (fallback on errors)
+  const excludeConnectionIds = new Set();
+  let lastError = null;
+  let lastStatus = null;
+  let lastHeaders = null;
+
+  while (true) {
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+
+    // All accounts unavailable
+    if (!credentials || credentials.allRateLimited) {
+      if (credentials?.allRateLimited) {
+        const errorMsg = lastError || credentials.lastError || "Unavailable";
+        const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
+        log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
+        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman, lastHeaders);
+      }
+      if (excludeConnectionIds.size === 0) {
+        log.warn("AUTH", `No active credentials for provider: ${provider}`);
+        return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
+      }
+      log.warn("CHAT", "No more accounts available", { provider });
+      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable", lastHeaders);
+    }
+
+    const { result, refreshedCredentials } = await runChatCore(credentials);
 
     if (result.success) return result.response;
 

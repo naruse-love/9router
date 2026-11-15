@@ -132,6 +132,13 @@ export const DEFAULT_RETRY_CONFIG = {
   504: { attempts: 2, delayMs: 3000 }
 };
 
+export const GEMINI_ROTATION = {
+  providerId: "gemini",
+  waitStatuses: [429, 503],
+  waitMs: 30 * 1000,
+  cycles: 3,
+};
+
 // Normalize a retry entry to { attempts, delayMs }
 export function resolveRetryEntry(entry) {
   if (entry == null) return { attempts: 0, delayMs: RETRY_CONFIG.delayMs };

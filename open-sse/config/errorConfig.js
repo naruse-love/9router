@@ -65,6 +65,11 @@ export const ERROR_RULES = [
   // NVIDIA NIM returns 400 with "degraded" when specific model cluster is unhealthy.
   // Lock only the degraded model (modelScoped: true) without locking the API key.
   { provider: "nvidia", text: "degraded", cooldownMs: 15 * 60 * 1000, modelScoped: true },
+  // Google AI Studio returns HTTP 400 for invalid/expired API keys; treat as account-scoped so Gemini rotates keys.
+  { provider: "gemini", text: "api key not valid", cooldownMs: COOLDOWN.long },
+  { provider: "gemini", text: "api_key_invalid",   cooldownMs: COOLDOWN.long },
+  { provider: "gemini", text: "api key expired",   cooldownMs: COOLDOWN.long },
+  { provider: "gemini", text: "api_key_expired",   cooldownMs: COOLDOWN.long },
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long },

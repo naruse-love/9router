@@ -11,6 +11,7 @@ const fx = vi.hoisted(() => ({
 }));
 const mocks = vi.hoisted(() => ({
   getProviderCredentials: vi.fn(),
+  getProviderConnections: vi.fn(async () => []),
   handleChatCore: vi.fn(),
 }));
 
@@ -20,7 +21,7 @@ vi.mock("@/lib/localDb", () => ({
   getComboByName: async (name) => fx.combos.find((c) => c.name === name) || null,
   getProviderNodes: async () => [],
   getCombos: async () => fx.combos,
-  getProviderConnections: async () => [],
+  getProviderConnections: mocks.getProviderConnections,
   getProviderConnectionById: async () => null,
   getCustomModels: async () => [],
 }));
@@ -89,6 +90,7 @@ beforeEach(() => {
     },
   };
   mocks.getProviderCredentials.mockResolvedValue(null);
+  mocks.getProviderConnections.mockResolvedValue([]);
   // model-a always fails upstream (500), so a combo of [model-a, model-b] only
   // succeeds by failing over to model-b.
   mocks.handleChatCore.mockImplementation(async ({ modelInfo }) => (modelInfo.model === "model-a"
@@ -178,17 +180,22 @@ const handlers = [
   ), "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"],
 ];
 
-describe.each(handlers)("%s handler is wired", (_name, call, allowed, denied) => {
+describe.each(handlers)("%s handler is wired", (name, call, allowed, denied) => {
   it("denies an unlisted model with 403 before any credential lookup", async () => {
     const r = await call(denied, "sk-media");
     expect(r.status).toBe(403);
     expect((await r.json()).error.message).toContain(denied);
     expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(mocks.getProviderConnections).not.toHaveBeenCalled();
   });
   it("lets a listed model through to the credential lookup", async () => {
     const r = await call(allowed, "sk-media");
     expect(r.status).not.toBe(403);
-    expect(mocks.getProviderCredentials).toHaveBeenCalled();
+    if (name === "gemini-native-tts") {
+      expect(mocks.getProviderConnections).toHaveBeenCalledWith({ provider: "gemini", isActive: true });
+    } else {
+      expect(mocks.getProviderCredentials).toHaveBeenCalled();
+    }
   });
   it("leaves an unrestricted key alone", async () => {
     const r = await call(denied, "sk-open");

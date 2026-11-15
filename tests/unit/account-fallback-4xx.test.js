@@ -56,4 +56,15 @@ describe("checkFallbackError — request-scoped vs account-scoped failures", () 
     expect(result.shouldFallback).toBe(true);
     expect(result.cooldownMs).toBeGreaterThan(0);
   });
+
+  it("never falls back or flags requestScoped for client abort status 499", () => {
+    expect(checkFallbackError(499, "Client closed request")).toEqual({
+      shouldFallback: false,
+      cooldownMs: 0,
+    });
+    expect(checkFallbackError(499, "rate limit exceeded", 0, "gemini")).toEqual({
+      shouldFallback: false,
+      cooldownMs: 0,
+    });
+  });
 });

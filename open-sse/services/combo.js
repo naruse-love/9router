@@ -474,6 +474,13 @@ export async function handleComboChat({
 
     try {
       const result = await handleSingleModel(body, modelStr);
+
+      // Client closed the connection — abort combo immediately without failing over
+      // to subsequent members or clearing session-sticky state.
+      if (result?.status === 499) {
+        log?.info?.("COMBO", `Client closed request during ${modelStr}, aborting combo`);
+        return result;
+      }
       
       // Success (2xx). A 2xx is necessary but NOT sufficient: Gemini aborts (e.g.
       // MALFORMED_FUNCTION_CALL) still return 200 and stream empty content, which would
@@ -613,6 +620,13 @@ export async function handleComboChat({
       if (!lastStatus) lastStatus = result.status;
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
+      if (error?.name === "AbortError") {
+        log.info("COMBO", `Model ${modelStr} aborted (client disconnect), stopping combo`);
+        return new Response(
+          JSON.stringify({ error: { message: "Client closed request" } }),
+          { status: 499, headers: { "Content-Type": "application/json" } }
+        );
+      }
       // Catch unexpected exceptions to ensure fallback continues
       if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
         clearStickyComboSession(comboName, sessionId);
@@ -786,6 +800,7 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
         .catch((e) => { out[i] = { __error: e }; })
         .finally(() => {
           settled++;
+          if (out[i]?.status === 499 || out[i]?.__error?.name === "AbortError") return finish();
           if (out[i] && out[i].ok) ok++;
           if (settled === calls.length) return finish();
           if (ok >= minPanel && !graceTimer) graceTimer = setTimeout(finish, stragglerGraceMs);
@@ -854,6 +869,19 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const calls = panel.map((m) => withTimeout(handleSingleModel(panelBody, m, true), cfg.panelHardTimeoutMs));
   const settled = await collectPanel(calls, { ...cfg, minPanel });
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
+
+  const abortedRes = settled.find((res) => res?.status === 499);
+  if (abortedRes) {
+    log?.info?.("FUSION", "Client closed request during panel execution, aborting fusion");
+    return abortedRes;
+  }
+  if (settled.some((res) => res?.__error?.name === "AbortError")) {
+    log?.info?.("FUSION", "Panel request aborted (client disconnect), aborting fusion");
+    return new Response(
+      JSON.stringify({ error: { message: "Client closed request" } }),
+      { status: 499, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
   // 2. Collect successful answers.
   const answers = [];

@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   handleChat: vi.fn(),
   getSettings: vi.fn(),
+  getProviderConnections: vi.fn(),
+  updateProviderConnection: vi.fn(),
   isValidApiKey: vi.fn(),
-  getProviderCredentials: vi.fn(),
-  markAccountUnavailable: vi.fn(),
   clearAccountError: vi.fn(),
+  connections: [],
 }));
 
 vi.mock("@/sse/handlers/chat.js", () => ({
@@ -14,18 +15,19 @@ vi.mock("@/sse/handlers/chat.js", () => ({
 }));
 
 vi.mock("@/sse/services/auth.js", () => ({
-  getProviderCredentials: mocks.getProviderCredentials,
   isValidApiKey: mocks.isValidApiKey,
-  markAccountUnavailable: mocks.markAccountUnavailable,
   clearAccountError: mocks.clearAccountError,
 }));
 
 vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
+  getProviderConnections: mocks.getProviderConnections,
+  updateProviderConnection: mocks.updateProviderConnection,
 }));
 
 const { GET } = await import("../../src/app/api/v1beta/models/route.js");
 const { POST } = await import("../../src/app/api/v1beta/models/[...path]/route.js");
+const { resetGeminiRotationCursors } = await import("../../src/sse/services/geminiRotation.js");
 
 function makeGeminiRequest(path, body, headers = {}, signal) {
   return new Request(`https://router.test/v1beta/models/${path}`, {
@@ -59,15 +61,23 @@ function audioBody() {
 describe("Gemini native v1beta endpoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetGeminiRotationCursors();
+    mocks.connections = [
+      {
+        id: "gemini-conn",
+        provider: "gemini",
+        authType: "apikey",
+        apiKey: "real-gemini-key",
+        name: "Gemini Test",
+        priority: 1,
+        isActive: true,
+        providerSpecificData: {},
+      },
+    ];
     mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.isValidApiKey.mockResolvedValue(true);
-    mocks.getProviderCredentials.mockResolvedValue({
-      apiKey: "real-gemini-key",
-      connectionId: "gemini-conn",
-      connectionName: "Gemini Test",
-      providerSpecificData: {},
-    });
-    mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false });
+    mocks.getProviderConnections.mockImplementation(async () => mocks.connections);
+    mocks.updateProviderConnection.mockResolvedValue(null);
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }), {
         status: 200,
@@ -152,20 +162,28 @@ describe("Gemini native v1beta endpoint", () => {
     const timeoutError = new TypeError("fetch failed");
     timeoutError.cause = { code: "UND_ERR_HEADERS_TIMEOUT", name: "HeadersTimeoutError" };
 
-    mocks.getProviderCredentials
-      .mockResolvedValueOnce({
+    mocks.connections = [
+      {
+        id: "first-conn",
+        provider: "gemini",
+        authType: "apikey",
         apiKey: "first-gemini-key",
-        connectionId: "first-conn",
-        connectionName: "First Gemini",
+        name: "First Gemini",
+        priority: 1,
+        isActive: true,
         providerSpecificData: {},
-      })
-      .mockResolvedValueOnce({
+      },
+      {
+        id: "second-conn",
+        provider: "gemini",
+        authType: "apikey",
         apiKey: "second-gemini-key",
-        connectionId: "second-conn",
-        connectionName: "Second Gemini",
+        name: "Second Gemini",
+        priority: 2,
+        isActive: true,
         providerSpecificData: {},
-      });
-    mocks.markAccountUnavailable.mockResolvedValueOnce({ shouldFallback: true });
+      },
+    ];
     global.fetch
       .mockRejectedValueOnce(timeoutError)
       .mockResolvedValueOnce(
@@ -183,25 +201,27 @@ describe("Gemini native v1beta endpoint", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch.mock.calls[0][1].headers["x-goog-api-key"]).toBe("first-gemini-key");
     expect(global.fetch.mock.calls[1][1].headers["x-goog-api-key"]).toBe("second-gemini-key");
-    expect(mocks.markAccountUnavailable).toHaveBeenCalledWith(
+    expect(mocks.updateProviderConnection).toHaveBeenCalledWith(
       "first-conn",
-      504,
-      expect.stringContaining("UND_ERR_HEADERS_TIMEOUT"),
-      "gemini",
-      "gemini-3.1-flash-tts-preview"
+      expect.objectContaining({
+        testStatus: "unavailable",
+        errorCode: 504,
+        lastError: expect.stringContaining("UND_ERR_HEADERS_TIMEOUT"),
+      })
     );
+    const [, patch] = mocks.updateProviderConnection.mock.calls[0];
+    expect(Object.keys(patch).some((k) => k.startsWith("modelLock_"))).toBe(false);
     expect(mocks.clearAccountError).toHaveBeenCalledWith(
       "second-conn",
-      expect.objectContaining({ apiKey: "second-gemini-key" }),
+      expect.objectContaining({ id: "second-conn", apiKey: "second-gemini-key" }),
       "gemini-3.1-flash-tts-preview"
     );
   });
 
-  it("returns 502 for native fetch failures when credential fallback is not allowed", async () => {
+  it("returns 502 for native fetch failures after exhausting rotation cycles", async () => {
     const networkError = new TypeError("fetch failed");
     networkError.cause = { code: "ECONNRESET" };
-    mocks.markAccountUnavailable.mockResolvedValueOnce({ shouldFallback: false });
-    global.fetch.mockRejectedValueOnce(networkError);
+    global.fetch.mockRejectedValue(networkError);
 
     const response = await POST(makeGeminiRequest("gemini-3.1-flash-tts-preview:generateContent", audioBody()), {
       params: Promise.resolve({ path: ["gemini-3.1-flash-tts-preview:generateContent"] }),
@@ -210,13 +230,17 @@ describe("Gemini native v1beta endpoint", () => {
 
     expect(response.status).toBe(502);
     expect(body.error.message).toContain("ECONNRESET");
-    expect(mocks.markAccountUnavailable).toHaveBeenCalledWith(
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(mocks.updateProviderConnection).toHaveBeenCalledWith(
       "gemini-conn",
-      502,
-      expect.stringContaining("ECONNRESET"),
-      "gemini",
-      "gemini-3.1-flash-tts-preview"
+      expect.objectContaining({
+        testStatus: "unavailable",
+        errorCode: 502,
+        lastError: expect.stringContaining("ECONNRESET"),
+      })
     );
+    const [, patch] = mocks.updateProviderConnection.mock.calls[0];
+    expect(Object.keys(patch).some((k) => k.startsWith("modelLock_"))).toBe(false);
   });
 
   it("does not mark Gemini credentials unavailable when the native client aborts", async () => {
@@ -232,7 +256,7 @@ describe("Gemini native v1beta endpoint", () => {
     );
 
     expect(response.status).toBe(499);
-    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+    expect(mocks.updateProviderConnection).not.toHaveBeenCalled();
   });
 
   it("keeps non-audio Gemini requests on the existing chat conversion path", async () => {
