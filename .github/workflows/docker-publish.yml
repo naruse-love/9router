@@ -25,6 +25,10 @@ concurrency:
   cancel-in-progress: false
   queue: max
 
+permissions:
+  contents: read
+  packages: write
+
 env:
   DOCKERHUB_IMAGE: decolua/9router
 
@@ -181,8 +185,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
 
       - name: Build and push platform image by digest
         id: build
@@ -282,8 +286,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
 
       - name: Create and verify version manifest
         env:
