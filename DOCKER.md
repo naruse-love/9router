@@ -180,7 +180,7 @@ The upstream repository needs these repository secrets for Docker Hub publishing
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 
-GHCR publishing uses the workflow's `GITHUB_TOKEN` with package write permission. Forks can publish to their own GHCR namespace, but Docker Hub publication is restricted to the upstream `decolua/9router` repository.
+GHCR publishing uses `GHCR_TOKEN`/`GHCR_USERNAME` when provided, and otherwise falls back to the workflow `GITHUB_TOKEN` (`github.actor`) with package write permission. Forks can publish to their own GHCR namespace, but Docker Hub publication is restricted to the upstream `decolua/9router` repository.
 
 The optional repository variables `ALPINE_MIRROR` and `NPM_REGISTRY` can override the default package mirrors used by the CI Docker build.
 
