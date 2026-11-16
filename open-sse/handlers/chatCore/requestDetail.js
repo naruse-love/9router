@@ -1,6 +1,8 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage } from "../../utils/usageTracking.js";
+import { describeHttpStatus } from "../../config/errorConfig.js";
+import { describeProviderThinking } from "./providerThinkingSummary.js";
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -80,7 +82,7 @@ export function extractUsageFromResponse(responseBody) {
 }
 
 export function buildRequestDetail(base, overrides = {}) {
-  return {
+  const detail = {
     provider: base.provider || "unknown",
     model: base.model || "unknown",
     connectionId: base.connectionId || undefined,
@@ -95,6 +97,17 @@ export function buildRequestDetail(base, overrides = {}) {
     status: base.status || "success",
     ...overrides
   };
+
+  // Hoist the two facts the details drawer needs into top-level, non-redacted
+  // fields: the API redacts request/providerRequest/providerResponse/response
+  // wholesale (they carry conversation content), which hid both the upstream
+  // status code and what 9Router asked the provider to think at.
+  const statusCode = Number(detail.response?.status);
+  const errorStatus = Number.isInteger(statusCode) && statusCode >= 400 ? statusCode : null;
+  detail.statusCode = errorStatus;
+  detail.statusText = errorStatus ? describeHttpStatus(errorStatus) : null;
+  detail.providerThinking = describeProviderThinking(detail.providerRequest);
+  return detail;
 }
 
 // Build the "done" summary: duration, ttft, in/out tokens with cache breakdown

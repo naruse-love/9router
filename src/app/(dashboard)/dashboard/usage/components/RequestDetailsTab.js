@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
+import Badge from "@/shared/components/Badge";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
@@ -50,6 +51,21 @@ function getProviderName(providerId, cache) {
 
   const providerConfig = getProviderByAlias(providerId) || AI_PROVIDERS[providerId];
   return providerConfig?.name || providerId;
+}
+
+/**
+ * Failed requests carry the upstream HTTP status in a top-level field
+ * (statusCode/statusText) because the details API redacts the response blob.
+ * Rendered as a badge so a 429/503 is readable at a glance; successes render
+ * nothing so the list stays scannable for failures.
+ */
+function StatusBadge({ detail }) {
+  if (!detail.status || detail.status === "success") return null;
+  return (
+    <Badge variant="error" size="sm">
+      {detail.statusText || detail.status}
+    </Badge>
+  );
 }
 
 function CollapsibleSection({ title, children, defaultOpen = false, icon = null }) {
@@ -263,6 +279,7 @@ export default function RequestDetailsTab() {
                     <span className="font-medium text-text-main">
                       {getProviderName(detail.provider, providerNameCache)}
                     </span>
+                    <StatusBadge detail={detail} />
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
                     <span>In <span className="font-mono text-text-main">{getInputTokens(detail.tokens).toLocaleString()}</span></span>
@@ -282,12 +299,13 @@ export default function RequestDetailsTab() {
 
         {/* Desktop table */}
         <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full min-w-[880px]">
+          <table className="w-full min-w-[960px]">
             <thead>
               <tr className="border-b border-black/5 dark:border-white/5">
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Timestamp</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Model</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Provider</th>
+                <th className="text-left p-4 text-sm font-semibold text-text-main">Status</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Input Tokens</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cached</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cache Creation</th>
@@ -299,7 +317,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="9" className="p-8 text-center text-text-muted">
+                  <td colSpan="10" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -308,7 +326,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="p-8 text-center text-text-muted">
+                  <td colSpan="10" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -328,6 +346,9 @@ export default function RequestDetailsTab() {
                       <span className="font-medium">
                         {getProviderName(detail.provider, providerNameCache)}
                       </span>
+                    </td>
+                    <td className="p-4 text-sm">
+                      <StatusBadge detail={detail} />
                     </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {getInputTokens(detail.tokens).toLocaleString()}
@@ -409,6 +430,13 @@ export default function RequestDetailsTab() {
                 )}>
                   {selectedDetail.status}
                 </span>
+                {selectedDetail.statusText && (
+                  <span className="text-text-muted"> · {selectedDetail.statusText}</span>
+                )}
+              </div>
+              <div>
+                <span className="text-text-muted">Thinking (to provider):</span>{" "}
+                <span className="font-mono text-text-main">{selectedDetail.providerThinking || "—"}</span>
               </div>
               <div>
                 <span className="text-text-muted">Latency:</span>{" "}

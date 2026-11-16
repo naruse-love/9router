@@ -109,21 +109,42 @@ describe("request details — tab crash-risk cases", () => {
     // Drawer reads tokens?.prompt_tokens — optional chaining tolerates undefined
     expect(got.tokens?.prompt_tokens || 0).toBe(0);
   });
+
+      it("persists the non-redacted summary fields (statusCode/statusText/providerThinking)", async () => {
+        // flushToDatabase builds an explicit record shape, so a new top-level field
+        // silently disappears unless it is listed there too.
+        await saveDetail({
+          id: "summary-1", provider: "gemini", model: "gemini-4-hydrogen",
+          status: "error", tokens: {},
+          statusCode: 503, statusText: "503 Service Unavailable",
+          providerThinking: "high",
+          request: { model: "gemini-4-hydrogen" },
+          response: { error: "upstream down", status: 503 },
+        });
+
+        const got = await db.getRequestDetailById("summary-1");
+        expect(got.statusCode).toBe(503);
+        expect(got.statusText).toBe("503 Service Unavailable");
+        expect(got.providerThinking).toBe("high");
+      });
+
+      it("summary fields default to null when absent", async () => {
+        await saveDetail({ id: "summary-2", provider: "openai", model: "m", status: "success", tokens: {}, request: {}, response: {} });
+        const got = await db.getRequestDetailById("summary-2");
+        expect(got.statusCode).toBeNull();
+        expect(got.statusText).toBeNull();
+        expect(got.providerThinking).toBeNull();
+      });
 });
 
-// Mirror of RequestDetailsTab token helpers (component is "use client",
-// helpers are not exported). Keep in sync with the component.
-function getCachedTokens(tokens) {
-  return tokens?.cached_tokens || tokens?.cache_read_input_tokens || 0;
-}
-function getCacheCreationTokens(tokens) {
-  return tokens?.cache_creation_input_tokens || 0;
-}
-function getInputTokens(tokens) {
-  const prompt = tokens?.prompt_tokens || tokens?.input_tokens || 0;
-  const cache = getCachedTokens(tokens);
-  return prompt < cache ? cache : prompt;
-}
+// Token helpers now live in tokenDisplay.js (imported by the component), so this
+// test imports the real implementation instead of mirroring it — the mirror had
+// already drifted (it missed nested prompt_tokens_details.cached_tokens).
+import {
+  getCachedTokens,
+  getCacheCreationTokens,
+  getInputTokens,
+} from "@/app/(dashboard)/dashboard/usage/components/tokenDisplay.js";
 
 describe("backupDbLite — excludes requestDetails, keeps critical data", () => {
   it("backup file omits requestDetails rows but keeps other tables", async () => {

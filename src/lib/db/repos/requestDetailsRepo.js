@@ -109,6 +109,12 @@ async function flushToDatabase() {
             connectionId: item.connectionId || null,
             timestamp: item.timestamp,
             status: item.status || null,
+            // Top-level, non-redacted summary fields: the details API strips
+            // request/providerRequest/providerResponse/response wholesale, so
+            // anything the drawer shows must live outside those blobs.
+            statusCode: item.statusCode ?? null,
+            statusText: item.statusText ?? null,
+            providerThinking: item.providerThinking ?? null,
             latency: item.latency || {},
             tokens: item.tokens || {},
             request: truncateField(item.request, config.maxJsonSize),

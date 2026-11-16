@@ -1,5 +1,7 @@
 // Logger utility for cloud
 
+import { formatThinkingSummary } from "open-sse/handlers/chatCore/providerThinkingSummary.js";
+
 const LOG_LEVELS = {
   DEBUG: 0,
   INFO: 1,
@@ -43,17 +45,11 @@ export function errorLine(tag, symbol, message) {
   console.log(`[${formatTime()}] ${tag} ${symbol} ${message}`);
 }
 
-// Format thinking intent for the request line ("high(10k)" / "off" / "auto")
+// Format thinking intent for the request line ("high" / "8k" / "off" / "auto").
+// Shares the formatter with the request-details drawer so the log and the
+// dashboard can never describe the same request differently.
 export function fmtThink(intent) {
-  if (!intent || !intent.mode) return null;
-  if (intent.mode === "none") return "off";
-  if (intent.mode === "auto") return "auto";
-  if (intent.mode === "budget") {
-    const k = intent.budget >= 1000 ? `${Math.round(intent.budget / 1000)}k` : `${intent.budget}`;
-    return k;
-  }
-  if (intent.mode === "level") return intent.level;
-  return null;
+  return formatThinkingSummary(intent);
 }
 
 function formatData(data) {

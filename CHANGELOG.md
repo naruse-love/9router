@@ -38,6 +38,8 @@
 - **Dashboard**: replace the custom model capability toggle with an explicit Model type selector (Chat / LLM by default) — enabling Speech to text no longer flips a chat model to STT and drops it from Available Models (#5602)
 - **UI**: link explicit input ids to their labels
 - **UI (mobile)**: make the dashboard usable on phone widths — responsive padding in the layout, Card, Modal and Drawer (drawers are now full-width under `sm`), a header that keeps its title/breadcrumb readable and moves the provider search into its own row below the actions, and `dvh` heights so the mobile browser chrome stops clipping the page; the widest pages (Skills, Translator, Pxpipe, Token Saver, Console Log, Usage, Endpoint, Providers) no longer overflow horizontally, and request details render as a card list instead of a 9-column table below `sm`
+- **Usage**: request details now report cache reads for every provider shape (nested `prompt_tokens_details.cached_tokens`, Gemini `cachedContentTokenCount`, DeepSeek `prompt_cache_hit_tokens`) — they previously showed `—` while the overview counted the same request correctly
+- **Usage**: request details show the upstream HTTP status (`503 Service Unavailable`, `429 Too Many Requests`) instead of a bare `error`, plus the thinking level 9Router actually sent the provider (`off` / `auto` / `high` / `8k`, including Kiro's `additionalModelRequestFields` and `<thinking_mode>` prefix)
 
 # v0.5.116 (2026-11-08)
 

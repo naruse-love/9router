@@ -28,6 +28,36 @@ export const DEFAULT_ERROR_MESSAGES = {
   504: "Gateway timeout"
 };
 
+// Canonical reason phrases (RFC 9110 + the 499 client-closed convention) so the
+// dashboard can label a failed request without re-deriving status text itself.
+export const HTTP_STATUS_TEXT = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  402: "Payment Required",
+  403: "Forbidden",
+  404: "Not Found",
+  406: "Not Acceptable",
+  408: "Request Timeout",
+  409: "Conflict",
+  413: "Payload Too Large",
+  422: "Unprocessable Content",
+  429: "Too Many Requests",
+  499: "Client Closed Request",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout"
+};
+
+// "503 Service Unavailable" for a known 4xx/5xx status, else the bare code.
+// Returns null when the value is not an HTTP error status.
+export function describeHttpStatus(status) {
+  const code = Number(status);
+  if (!Number.isInteger(code) || code < 400 || code > 599) return null;
+  const text = HTTP_STATUS_TEXT[code];
+  return text ? `${code} ${text}` : String(code);
+}
+
 // Exponential backoff config for rate limits
 export const BACKOFF_CONFIG = {
   base: 2000,
