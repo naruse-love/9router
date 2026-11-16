@@ -227,115 +227,118 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   };
 
   return (
-    <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
-      {/* Mobile menu button */}
-      <div className="flex items-center gap-3 lg:hidden shrink-0">
-        {showMenuButton && (
-          <button
-            onClick={onMenuClick}
-            className="text-text-main hover:text-primary transition-colors"
-          >
-            <span className="material-symbols-outlined">menu</span>
-          </button>
-        )}
-      </div>
+    <header className="shrink-0 flex flex-col gap-2 px-3 sm:px-4 lg:px-8 pt-2.5 sm:pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
+      <div className="flex items-center justify-between gap-2 sm:gap-3">
+        {/* Mobile menu button */}
+        <div className="flex items-center gap-3 lg:hidden shrink-0">
+          {showMenuButton && (
+            <button
+              onClick={onMenuClick}
+              className="text-text-main hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined">menu</span>
+            </button>
+          )}
+        </div>
 
-      {/* Page title with breadcrumbs */}
-      <div className="flex flex-col min-w-0 flex-1">
-        {breadcrumbs.length > 0 ? (
-          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-            {breadcrumbs.map((crumb, index) => (
-              <div
-                key={`${crumb.label}-${crumb.href || "current"}`}
-                className={`items-center gap-1.5 sm:gap-2 min-w-0 ${
-                  index < breadcrumbs.length - 1 ? "hidden sm:flex shrink-0" : "flex flex-1"
-                }`}
-              >
-                {index > 0 && (
-                  <span className="material-symbols-outlined text-text-muted text-base hidden sm:inline">
-                    chevron_right
+        {/* Page title with breadcrumbs */}
+        <div className="flex flex-col min-w-0 flex-1">
+          {breadcrumbs.length > 0 ? (
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+              {breadcrumbs.map((crumb, index) => (
+                <div
+                  key={`${crumb.label}-${crumb.href || "current"}`}
+                  className={`items-center gap-1.5 sm:gap-2 min-w-0 ${
+                    index < breadcrumbs.length - 1 ? "hidden sm:flex shrink-0" : "flex flex-1"
+                  }`}
+                >
+                  {index > 0 && (
+                    <span className="hidden sm:flex shrink-0 items-center">
+                      <span className="material-symbols-outlined text-text-muted text-base">chevron_right</span>
+                    </span>
+                  )}
+                  {crumb.href ? (
+                    <Link
+                      href={crumb.href}
+                      className="text-text-muted hover:text-primary transition-colors truncate"
+                    >
+                      {crumb.label}
+                    </Link>
+                  ) : (
+                    <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                      {crumb.image && (
+                        <ProviderIcon
+                          src={crumb.image}
+                          alt={crumb.label}
+                          size={28}
+                          className="object-contain rounded max-w-[24px] max-h-[24px] sm:max-w-[28px] sm:max-h-[28px] shrink-0"
+                          fallbackText={crumb.label.slice(0, 2).toUpperCase()}
+                        />
+                      )}
+                      <h1 className="min-w-0 text-base lg:text-2xl font-semibold text-text-main tracking-tight truncate">
+                        {translate(crumb.label)}
+                      </h1>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : title ? (
+            <div>
+              <div className="flex items-center gap-2 min-w-0">
+                {icon && (
+                  <span className="material-symbols-outlined shrink-0 text-primary text-xl lg:text-2xl">
+                    {icon}
                   </span>
                 )}
-                {crumb.href ? (
-                  <Link
-                    href={crumb.href}
-                    className="text-text-muted hover:text-primary transition-colors truncate"
-                  >
-                    {crumb.label}
-                  </Link>
-                ) : (
-                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                    {crumb.image && (
-                      <ProviderIcon
-                        src={crumb.image}
-                        alt={crumb.label}
-                        size={28}
-                        className="object-contain rounded max-w-[24px] max-h-[24px] sm:max-w-[28px] sm:max-h-[28px] shrink-0"
-                        fallbackText={crumb.label.slice(0, 2).toUpperCase()}
-                      />
-                    )}
-                    <h1 className="text-base lg:text-2xl font-semibold text-text-main tracking-tight truncate">
-                      {translate(crumb.label)}
-                    </h1>
-                  </div>
-                )}
+                <h1 className="min-w-0 text-base lg:text-2xl font-semibold tracking-tight truncate">
+                  {translate(title)}
+                </h1>
               </div>
-            ))}
-          </div>
-        ) : title ? (
-          <div>
-            <div className="flex items-center gap-2">
-              {icon && (
-                <span className="material-symbols-outlined text-primary text-xl lg:text-2xl">
-                  {icon}
-                </span>
+              {description && (
+                <p className="hidden lg:block text-sm text-text-muted truncate">
+                  {translate(description)}
+                </p>
               )}
-              <h1 className="text-base lg:text-2xl font-semibold tracking-tight truncate">
-                {translate(title)}
-              </h1>
             </div>
-            {description && (
-              <p className="hidden lg:block text-sm text-text-muted truncate">
-                {translate(description)}
-              </p>
-            )}
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
 
-      {/* Right actions */}
-      <div className="flex items-center gap-1 shrink-0">
-        {displayName && (loginMethod === "OIDC" || loginMethod === "SAML") && (
-          <div
-            className="hidden sm:flex items-center max-w-[220px] px-3 py-1.5 rounded-full border border-border bg-surface/70 text-xs text-text-muted truncate"
-            title={displayName}
+        {/* Right actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          {displayName && (loginMethod === "OIDC" || loginMethod === "SAML") && (
+            <div
+              className="hidden sm:flex items-center max-w-[220px] px-3 py-1.5 rounded-full border border-border bg-surface/70 text-xs text-text-muted truncate"
+              title={displayName}
+            >
+              <span className="material-symbols-outlined text-[14px] mr-1.5 text-primary">person</span>
+              <span className="truncate">{displayName}</span>
+              <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                {loginMethod}
+              </span>
+            </div>
+          )}
+          <HeaderSearch wrapperClassName="hidden w-[160px] sm:block sm:w-[220px]" />
+          <button
+            onClick={() => setDonateOpen(true)}
+            className="hidden sm:flex items-center gap-1.5 px-3 h-8 rounded-lg border border-pink-500/30 bg-pink-500/10 text-pink-600 dark:text-pink-400 hover:bg-pink-500/20 transition-colors text-sm font-medium"
+            aria-label="Donate"
           >
-            <span className="material-symbols-outlined text-[14px] mr-1.5 text-primary">person</span>
-            <span className="truncate">{displayName}</span>
-            <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-              {loginMethod}
-            </span>
-          </div>
-        )}
-        <HeaderSearch />
-        <button
-          onClick={() => setDonateOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 px-3 h-8 rounded-lg border border-pink-500/30 bg-pink-500/10 text-pink-600 dark:text-pink-400 hover:bg-pink-500/20 transition-colors text-sm font-medium"
-          aria-label="Donate"
-        >
-          <span className="material-symbols-outlined text-[18px]">volunteer_activism</span>
-          <span className="hidden sm:inline">Donate</span>
-        </button>
-        <ThemeToggle />
-        <HeaderLanguage />
-        <HeaderMenu onLogout={handleLogout} />
+            <span className="material-symbols-outlined text-[18px]">volunteer_activism</span>
+            <span className="hidden sm:inline">Donate</span>
+          </button>
+          <ThemeToggle className="max-sm:size-9" />
+          <HeaderLanguage />
+          <HeaderMenu onLogout={handleLogout} />
+        </div>
       </div>
+      <HeaderSearch wrapperClassName="w-full sm:hidden" />
       <DonateModal isOpen={donateOpen} onClose={() => setDonateOpen(false)} />
     </header>
   );
 }
 
-function HeaderSearch() {
+function HeaderSearch({ wrapperClassName = "" }) {
   const visible = useHeaderSearchStore((s) => s.visible);
   const query = useHeaderSearchStore((s) => s.query);
   const placeholder = useHeaderSearchStore((s) => s.placeholder);
@@ -344,7 +347,7 @@ function HeaderSearch() {
   if (!visible) return null;
 
   return (
-    <div className="relative w-[160px] sm:w-[220px]">
+    <div className={`relative ${wrapperClassName}`}>
       <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-text-muted text-[16px] pointer-events-none">
         search
       </span>

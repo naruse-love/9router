@@ -977,8 +977,8 @@ export default function APIPageClient({ machineId }) {
 
       {/* API Keys */}
       <Card id="require-api-key">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h2 className="min-w-0 text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">vpn_key</span>
             API Keys
           </h2>
@@ -987,7 +987,7 @@ export default function APIPageClient({ machineId }) {
           </Button>
         </div>
 
-        <div className="flex items-center justify-between pb-4 mb-4 border-b border-border">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-4 mb-4 border-b border-border">
           <div>
             <p className="font-medium">Require API key</p>
             <p className="text-sm text-text-muted">

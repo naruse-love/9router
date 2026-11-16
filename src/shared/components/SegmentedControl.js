@@ -18,7 +18,7 @@ export default function SegmentedControl({
   return (
     <div
       className={cn(
-        "inline-flex items-center p-1 rounded-[10px] overflow-x-auto",
+        "inline-flex max-w-full items-center p-1 rounded-[10px] overflow-x-auto",
         "bg-surface-2",
         className
       )}

@@ -69,23 +69,23 @@ export default function ConsoleLogClient() {
   }, [logs]);
 
   return (
-    <div className="">
+    <div className="min-w-0">
       <Card>
-        <div className="flex items-center justify-end px-4 pt-3 pb-2">
+        <div className="flex items-center justify-end px-3 sm:px-4 pt-3 pb-2">
           <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>
             Clear
           </Button>
         </div>
         <div
           ref={logRef}
-          className="bg-black rounded-b-lg p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
+          className="bg-black rounded-b-lg p-3 sm:p-4 text-xs font-mono h-[calc(100dvh-220px)] overflow-y-auto overflow-x-auto"
         >
           {logs.length === 0 ? (
             <span className="text-text-muted">No console logs yet.</span>
           ) : (
-            <div className="space-y-0.5">
+            <div className="min-w-0 space-y-0.5">
               {logs.map((line, i) => (
-                <div key={i}>{colorLine(line)}</div>
+                <div key={i} className="whitespace-pre-wrap break-words">{colorLine(line)}</div>
               ))}
             </div>
           )}

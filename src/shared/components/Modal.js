@@ -64,8 +64,8 @@ export default function Modal({
       >
         {/* Header */}
         {(title || showTrafficLights) && (
-          <div className="flex items-center justify-between p-2 border-b border-border-subtle">
-            <div className="flex items-center">
+          <div className="flex items-center justify-between gap-2 p-2 border-b border-border-subtle">
+            <div className="flex min-w-0 items-center">
               {/* Traffic lights — desktop only */}
               {showTrafficLights && (
                 <div className="hidden md:flex items-center gap-2 mr-4 ml-2">
@@ -84,14 +84,14 @@ export default function Modal({
                 </div>
               )}
               {title && (
-                <h2 className="text-lg font-semibold text-text-main">{title}</h2>
+                <h2 className="truncate text-base sm:text-lg font-semibold text-text-main">{title}</h2>
               )}
             </div>
             {/* X button — mobile only */}
             <button
               onClick={onClose}
               aria-label="Close"
-              className="md:hidden p-1.5 rounded-[10px] text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors"
+              className="md:hidden p-1.5 shrink-0 rounded-[10px] text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">close</span>
             </button>
@@ -99,11 +99,11 @@ export default function Modal({
         )}
 
         {/* Body */}
-        <div className="p-6 max-h-[calc(85vh-100px)] overflow-y-auto custom-scrollbar">{children}</div>
+        <div className="p-4 sm:p-6 max-h-[calc(100dvh-120px)] sm:max-h-[calc(85vh-100px)] overflow-y-auto custom-scrollbar">{children}</div>
 
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-3 p-6 border-t border-border-subtle">
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 p-4 sm:p-6 border-t border-border-subtle">
             {footer}
           </div>
         )}

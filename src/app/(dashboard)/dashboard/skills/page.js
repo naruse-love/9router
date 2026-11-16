@@ -14,7 +14,7 @@ function CopyButton({ value, label = "Copy link" }) {
   return (
     <button
       onClick={() => copy(value)}
-      className="px-2 py-1 rounded-md bg-primary text-white text-[11px] font-medium hover:bg-primary/90 transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1"
+      className="px-2 py-1 rounded-md bg-primary text-white text-[11px] font-medium hover:bg-primary/90 transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1 self-start"
       title={value}
     >
       <span className="material-symbols-outlined text-[12px]">
@@ -29,42 +29,44 @@ function SkillRow({ skill }) {
   const url = getSkillRawUrl(skill.id);
   return (
     <div
-      className={`flex items-start gap-3 p-4 rounded-[14px] border shadow-[var(--shadow-soft)] transition-colors ${
+      className={`flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:p-4 rounded-[14px] border shadow-[var(--shadow-soft)] transition-colors ${
         skill.isEntry
           ? "border-brand-500/40 bg-brand-500/5"
           : "border-border-subtle bg-surface hover:bg-surface-2"
       }`}
     >
-      <div
-        className={`size-9 rounded-lg flex items-center justify-center shrink-0 ${
-          skill.isEntry ? "bg-primary text-white" : "bg-primary/10 text-primary"
-        }`}
-      >
-        <span className="material-symbols-outlined text-[18px]">{skill.icon}</span>
-      </div>
-
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h3 className="font-semibold text-sm text-text-main">{skill.name}</h3>
-          {skill.isEntry && (
-            <Badge variant="primary" size="sm">START HERE</Badge>
-          )}
-          {skill.endpoint && (
-            <Badge variant="default" size="sm">
-              <code className="text-[10px]">{skill.endpoint}</code>
-            </Badge>
-          )}
-        </div>
-        <p className="text-xs text-text-muted mt-0.5">{skill.description}</p>
-        <a
-          href={getSkillBlobUrl(skill.id)}
-          target="_blank"
-          rel="noreferrer"
-          className="text-[11px] text-text-muted hover:text-primary mt-1 inline-flex items-center gap-1 break-all"
+      <div className="flex min-w-0 items-start gap-3">
+        <div
+          className={`size-9 rounded-lg flex items-center justify-center shrink-0 ${
+            skill.isEntry ? "bg-primary text-white" : "bg-primary/10 text-primary"
+          }`}
         >
-          {url}
-          <span className="material-symbols-outlined text-[12px]">open_in_new</span>
-        </a>
+          <span className="material-symbols-outlined text-[18px]">{skill.icon}</span>
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-semibold text-sm text-text-main">{skill.name}</h3>
+            {skill.isEntry && (
+              <Badge variant="primary" size="sm">START HERE</Badge>
+            )}
+            {skill.endpoint && (
+              <Badge variant="default" size="sm">
+                <code className="text-[10px]">{skill.endpoint}</code>
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-text-muted mt-0.5">{skill.description}</p>
+          <a
+            href={getSkillBlobUrl(skill.id)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[11px] text-text-muted hover:text-primary mt-1 inline-flex items-start gap-1 break-all min-w-0"
+          >
+            <span className="min-w-0 break-all">{url}</span>
+            <span className="material-symbols-outlined text-[12px] shrink-0">open_in_new</span>
+          </a>
+        </div>
       </div>
 
       <CopyButton value={url} />
@@ -74,10 +76,10 @@ function SkillRow({ skill }) {
 
 export default function SkillsPage() {
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6">
       <Card padding="md">
         <div className="text-xs text-text-muted mb-2">Paste this to your AI:</div>
-        <div className="px-3 py-2 rounded bg-surface-2 font-mono text-[12px] text-text-main">
+        <div className="px-3 py-2 rounded bg-surface-2 font-mono text-[12px] text-text-main break-all">
           Read this skill and use it: {getSkillRawUrl("9router")}
         </div>
       </Card>

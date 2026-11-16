@@ -12,11 +12,11 @@ export default function Drawer({
   className
 }) {
   const widths = {
-    sm: "w-[400px]",
-    md: "w-[500px]",
-    lg: "w-[600px]",
-    xl: "w-[800px]",
-    full: "w-full",
+    sm: "sm:max-w-[400px]",
+    md: "sm:max-w-[500px]",
+    lg: "sm:max-w-[600px]",
+    xl: "sm:max-w-[800px]",
+    full: "max-w-full",
   };
 
   useEffect(() => {
@@ -49,7 +49,7 @@ export default function Drawer({
 
       {/* Drawer panel */}
       <div className={cn(
-        "absolute right-0 top-0 h-full bg-surface flex flex-col",
+        "absolute right-0 top-0 h-full w-full bg-surface flex flex-col",
         "shadow-[var(--shadow-elev)]",
         "slide-in-right",
         "border-l border-border-subtle",
@@ -57,23 +57,23 @@ export default function Drawer({
         className
       )}>
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-border-subtle flex-shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between gap-2 p-4 sm:p-6 border-b border-border-subtle flex-shrink-0">
+          <div className="flex min-w-0 items-center gap-3">
             {title && (
-              <h2 className="text-lg font-semibold text-text-main">{title}</h2>
+              <h2 className="truncate text-base sm:text-lg font-semibold text-text-main">{title}</h2>
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-[10px] text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors"
+            className="p-1.5 shrink-0 rounded-[10px] text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors"
           >
             <span className="material-symbols-outlined text-[20px]">close</span>
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar">
           {children}
         </div>
       </div>

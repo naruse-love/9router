@@ -16,10 +16,10 @@ export default function Card({
 }) {
   const paddings = {
     none: "",
-    xs: "p-3",
-    sm: "p-4",
-    md: "p-6",
-    lg: "p-8",
+    xs: "p-2.5 sm:p-3",
+    sm: "p-3 sm:p-4",
+    md: "p-4 sm:p-6",
+    lg: "p-5 sm:p-8",
   };
 
   return (
@@ -34,14 +34,14 @@ export default function Card({
       {...props}
     >
       {(title || action) && (
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div className="flex min-w-0 items-center gap-3">
             {icon && (
               <div className="p-2 rounded-[10px] bg-bg text-text-muted">
                 <span className="material-symbols-outlined text-[20px]">{icon}</span>
               </div>
             )}
-            <div>
+            <div className="min-w-0">
               {title && (
                 <h3 className="text-text-main font-semibold">{title}</h3>
               )}

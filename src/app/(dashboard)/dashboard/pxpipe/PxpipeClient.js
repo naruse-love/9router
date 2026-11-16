@@ -50,10 +50,10 @@ const REASON_LABELS = {
 
 function SummaryCard({ label, value, sub, tone }) {
   return (
-    <Card className="p-4">
-      <p className="text-xs text-text-muted uppercase tracking-wide">{label}</p>
-      <p className={`text-xl font-semibold mt-1 ${tone || ""}`}>{value}</p>
-      {sub && <p className="text-xs text-text-muted mt-0.5">{sub}</p>}
+    <Card className="p-3 sm:p-4 min-w-0">
+      <p className="text-[11px] sm:text-xs text-text-muted uppercase tracking-wide truncate">{label}</p>
+      <p className={`text-lg sm:text-xl font-semibold mt-1 break-words ${tone || ""}`}>{value}</p>
+      {sub && <p className="text-[11px] sm:text-xs text-text-muted mt-0.5">{sub}</p>}
     </Card>
   );
 }
@@ -102,13 +102,13 @@ export default function PxpipeClient() {
           : "Stopped";
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
+    <div className="space-y-4 sm:space-y-6 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <h2 className="flex min-w-0 items-center gap-2 text-lg font-semibold">
           <span className="material-symbols-outlined text-primary">image</span>
-          PXPIPE Dashboard
+          <span className="truncate">PXPIPE Dashboard</span>
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <a href="/dashboard/token-saver" className="text-xs text-primary underline hover:opacity-80">
             Token Saver settings
           </a>
@@ -133,14 +133,14 @@ export default function PxpipeClient() {
       </div>
 
       <Card className="p-4">
-        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-          <h3 className="font-medium">Token savings (estimated)</h3>
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <h3 className="min-w-0 font-medium">Token savings (estimated)</h3>
+          <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-bg-subtle p-1">
             {WINDOW_TABS.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setWindowId(tab.id)}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                   windowId === tab.id
                     ? "bg-primary text-white shadow-sm"
                     : "text-text-muted hover:text-text hover:bg-bg-hover"

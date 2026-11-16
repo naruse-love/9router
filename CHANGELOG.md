@@ -37,6 +37,7 @@
 - **Usage**: show usage for a MiniMax Code desktop lease connection (`authType: "mcode-lease"`) in Provider Limits and the usage route, and forward `authType` through the dispatch so lease mode is detected instead of answering "Usage API not implemented"
 - **Dashboard**: replace the custom model capability toggle with an explicit Model type selector (Chat / LLM by default) — enabling Speech to text no longer flips a chat model to STT and drops it from Available Models (#5602)
 - **UI**: link explicit input ids to their labels
+- **UI (mobile)**: make the dashboard usable on phone widths — responsive padding in the layout, Card, Modal and Drawer (drawers are now full-width under `sm`), a header that keeps its title/breadcrumb readable and moves the provider search into its own row below the actions, and `dvh` heights so the mobile browser chrome stops clipping the page; the widest pages (Skills, Translator, Pxpipe, Token Saver, Console Log, Usage, Endpoint, Providers) no longer overflow horizontally, and request details render as a card list instead of a 9-column table below `sm`
 
 # v0.5.116 (2026-11-08)
 

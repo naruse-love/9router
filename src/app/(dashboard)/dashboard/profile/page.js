@@ -794,7 +794,7 @@ export default function ProfilePage() {
                   <span className="material-symbols-outlined text-[18px]">
                     {option === "light" ? "light_mode" : option === "dark" ? "dark_mode" : "contrast"}
                   </span>
-                  <span className="capitalize text-xs sm:text-sm">{option}</span>
+                  <span className="hidden sm:inline capitalize text-xs sm:text-sm">{option}</span>
                 </button>
               ))}
             </div>

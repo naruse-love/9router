@@ -218,15 +218,15 @@ export default function TranslatorPage() {
   };
 
   return (
-    <div className="p-8 space-y-3">
+    <div className="space-y-3 sm:p-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h1 className="text-2xl font-bold text-text-main">Translator Debug</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-2">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-text-main">Translator Debug</h1>
           <p className="text-sm text-text-muted mt-1">Replay request flow — matches log files</p>
         </div>
         {meta && (
-          <div className="flex items-center gap-2 flex-wrap justify-end">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <MetaBadge label="src" value={meta.sourceFormat} color="blue" />
             <span className="material-symbols-outlined text-text-muted text-[14px]">arrow_forward</span>
             <MetaBadge label="dst" value={meta.targetFormat} color="orange" />
@@ -243,17 +243,17 @@ export default function TranslatorPage() {
 
         return (
           <Card key={step.id}>
-            <div className="p-4 space-y-3">
+            <div className="p-3 sm:p-4 space-y-3">
               {/* Step header */}
-              <div className="flex items-center justify-between">
-                <button onClick={() => toggle(step.id)} className="flex items-center gap-2 flex-1 text-left group">
-                  <span className="material-symbols-outlined text-[20px] text-text-muted group-hover:text-primary transition-colors">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <button onClick={() => toggle(step.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left group">
+                  <span className="material-symbols-outlined shrink-0 text-[20px] text-text-muted group-hover:text-primary transition-colors">
                     {isExpanded ? "expand_more" : "chevron_right"}
                   </span>
-                  <span className="text-xs font-mono text-text-muted/60 w-4">{step.id}</span>
-                  <h3 className="text-sm font-semibold text-text-main">{step.label}</h3>
-                  <span className="text-xs text-text-muted/60 font-mono">{step.file}</span>
-                  {content && <span className="text-xs text-green-500">({content.length} chars)</span>}
+                  <span className="text-xs font-mono text-text-muted/60 w-4 shrink-0">{step.id}</span>
+                  <h3 className="text-sm font-semibold text-text-main truncate">{step.label}</h3>
+                  <span className="hidden sm:inline text-xs text-text-muted/60 font-mono truncate">{step.file}</span>
+                  {content && <span className="text-xs text-green-500 shrink-0">({content.length})</span>}
                 </button>
                 {!isExpanded && (
                   <div className="flex gap-1 shrink-0">
@@ -267,17 +267,19 @@ export default function TranslatorPage() {
               {isExpanded && (
                 <>
                   <div className="border border-border rounded-lg overflow-hidden">
-                    <Editor
-                      height="400px"
-                      defaultLanguage={step.lang === "text" ? "plaintext" : "json"}
-                      value={content}
-                      onChange={(v) => {
-                        setContent(step.id, v || "");
-                        if (step.id === 1) detectMeta(v || "");
-                      }}
-                      theme="vs-dark"
-                      options={EDITOR_OPTIONS}
-                    />
+                    <div className="h-[280px] sm:h-[400px]">
+                      <Editor
+                        height="100%"
+                        defaultLanguage={step.lang === "text" ? "plaintext" : "json"}
+                        value={content}
+                        onChange={(v) => {
+                          setContent(step.id, v || "");
+                          if (step.id === 1) detectMeta(v || "");
+                        }}
+                        theme="vs-dark"
+                        options={EDITOR_OPTIONS}
+                      />
+                    </div>
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     <Button size="sm" variant="outline" icon="folder_open" loading={loading[`load-${step.id}`]} onClick={() => handleLoad(step.id)}>Load</Button>

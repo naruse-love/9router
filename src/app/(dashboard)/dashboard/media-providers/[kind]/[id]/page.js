@@ -95,7 +95,7 @@ export default function MediaProviderDetailPage() {
           </div>
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <h1 className="text-3xl font-semibold tracking-tight">{provider.name}</h1>
+              <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight sm:text-3xl">{provider.name}</h1>
               {!isCustom && provider.notice?.apiKeyUrl && (
                 <a
                   href={provider.notice.apiKeyUrl}

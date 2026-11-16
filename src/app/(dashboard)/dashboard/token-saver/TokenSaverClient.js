@@ -487,7 +487,7 @@ export default function TokenSaverClient() {
       : "bg-warning/15 text-warning";
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-4 sm:space-y-6 sm:p-6">
       <Card id="rtk">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -497,7 +497,7 @@ export default function TokenSaverClient() {
             Token Saver
           </h2>
         </div>
-        <div className="flex items-center justify-between pt-2 pb-4 border-b border-border gap-4">
+        <div className="flex items-start sm:items-center justify-between pt-2 pb-4 border-b border-border gap-3 sm:gap-4">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
               Compress tool output{" "}
@@ -519,7 +519,7 @@ export default function TokenSaverClient() {
             onChange={() => handleRtkEnabled(!rtkEnabled)}
           />
         </div>
-        <div className="flex items-center justify-between py-4 gap-4 flex-wrap">
+        <div className="flex items-start sm:items-center justify-between py-4 gap-3 sm:gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               <p className="font-medium">
@@ -653,7 +653,7 @@ export default function TokenSaverClient() {
             </p>
           </div>
         )}
-        <div className="flex items-center justify-between pt-4 border-t border-border gap-4 flex-wrap">
+        <div className="flex items-start sm:items-center justify-between pt-4 border-t border-border gap-3 sm:gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
               Compress LLM output{" "}
@@ -703,7 +703,7 @@ export default function TokenSaverClient() {
             />
           </div>
         </div>
-        <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
+        <div className="flex items-start sm:items-center justify-between pt-4 mt-4 border-t border-border gap-3 sm:gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
               Lazy senior dev{" "}
@@ -754,7 +754,7 @@ export default function TokenSaverClient() {
             />
           </div>
         </div>
-        <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
+        <div className="flex items-start sm:items-center justify-between pt-4 mt-4 border-t border-border gap-3 sm:gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">Custom system prompt</p>
             <p className="text-sm text-text-muted">
@@ -787,7 +787,7 @@ export default function TokenSaverClient() {
         )}
         {/* PXPIPE hidden from UI — experimental, not exposed to users yet */}
         {false && (
-        <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
+        <div className="flex items-start sm:items-center justify-between pt-4 mt-4 border-t border-border gap-3 sm:gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               <p className="font-medium">

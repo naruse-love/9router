@@ -166,7 +166,7 @@ export default function RequestDetailsTab() {
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Card padding="md">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="provider-filter" className="text-sm font-medium text-text-main">Provider</label>
             <select
@@ -223,7 +223,7 @@ export default function RequestDetailsTab() {
               variant="ghost" 
               onClick={handleClearFilters}
               disabled={!filters.provider && !filters.startDate && !filters.endDate}
-              className="w-full"
+              className="w-full sm:w-auto lg:w-full"
             >
               Clear Filters
             </Button>
@@ -232,7 +232,56 @@ export default function RequestDetailsTab() {
       </Card>
 
       <Card padding="none">
-        <div className="overflow-x-auto">
+        {/* Mobile cards */}
+        <div className="sm:hidden">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 p-8 text-text-muted">
+              <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+              Loading...
+            </div>
+          ) : details.length === 0 ? (
+            <div className="p-8 text-center text-text-muted">No request details found</div>
+          ) : (
+            <div className="divide-y divide-black/5 dark:divide-white/5">
+              {details.map((detail, index) => (
+                <div key={`m-${detail.id}-${index}`} className="flex flex-col gap-2 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 break-all font-mono text-sm font-medium text-text-main">
+                      {detail.model}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => handleViewDetail(detail)}
+                    >
+                      Detail
+                    </Button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+                    <span>{new Date(detail.timestamp).toLocaleString()}</span>
+                    <span className="font-medium text-text-main">
+                      {getProviderName(detail.provider, providerNameCache)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
+                    <span>In <span className="font-mono text-text-main">{getInputTokens(detail.tokens).toLocaleString()}</span></span>
+                    <span>Cached <span className="font-mono text-text-main">{getCachedTokens(detail.tokens) > 0 ? getCachedTokens(detail.tokens).toLocaleString() : "—"}</span></span>
+                    <span>Cache+ <span className="font-mono text-text-main">{getCacheCreationTokens(detail.tokens) > 0 ? getCacheCreationTokens(detail.tokens).toLocaleString() : "—"}</span></span>
+                    <span>Out <span className="font-mono text-text-main">{getOutputTokens(detail.tokens).toLocaleString()}</span></span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
+                    <span>TTFT <span className="font-mono">{detail.latency?.ttft || 0}ms</span></span>
+                    <span>Total <span className="font-mono">{detail.latency?.total || 0}ms</span></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Desktop table */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full min-w-[880px]">
             <thead>
               <tr className="border-b border-black/5 dark:border-white/5">
@@ -250,7 +299,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="9" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -259,7 +308,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="9" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -276,10 +325,10 @@ export default function RequestDetailsTab() {
                       {detail.model}
                     </td>
                     <td className="max-w-[180px] truncate p-4 text-sm text-text-main">
-                       <span className="font-medium">
-                         {getProviderName(detail.provider, providerNameCache)}
-                       </span>
-                     </td>
+                      <span className="font-medium">
+                        {getProviderName(detail.provider, providerNameCache)}
+                      </span>
+                    </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {getInputTokens(detail.tokens).toLocaleString()}
                     </td>
@@ -345,9 +394,9 @@ export default function RequestDetailsTab() {
                 <span className="text-text-main">{new Date(selectedDetail.timestamp).toLocaleString()}</span>
               </div>
               <div>
-                 <span className="text-text-muted">Provider:</span>{" "}
-                 <span className="text-text-main font-medium">{getProviderName(selectedDetail.provider, providerNameCache)}</span>
-               </div>
+                <span className="text-text-muted">Provider:</span>{" "}
+                <span className="text-text-main font-medium">{getProviderName(selectedDetail.provider, providerNameCache)}</span>
+              </div>
               <div>
                 <span className="text-text-muted">Model:</span>{" "}
                 <span className="text-text-main font-mono">{selectedDetail.model}</span>
