@@ -69,6 +69,34 @@ function writeJsonFile(sessionPath, filename, data) {
   }
 }
 
+// Serialize nested error.cause chain cleanly for 6_error.json diagnostics
+function serializeErrorCause(cause, depth = 0, seen = new WeakSet()) {
+  if (cause == null || depth >= 4) return undefined;
+  if (typeof cause !== "object") return { message: String(cause) };
+  if (seen.has(cause)) return undefined;
+  seen.add(cause);
+  const serialized = {};
+  if (cause.code != null) serialized.code = cause.code;
+  if (cause.message != null && (cause.message !== "" || !Array.isArray(cause.errors))) {
+    serialized.message = String(cause.message);
+  }
+  if (cause.name && cause.name !== "Error") serialized.name = cause.name;
+  const nestedCause = serializeErrorCause(cause.cause, depth + 1, seen);
+  if (nestedCause) serialized.cause = nestedCause;
+  if (Array.isArray(cause.errors) && cause.errors.length > 0) {
+    const errors = cause.errors
+      .slice(0, 5)
+      .map((inner) => serializeErrorCause(inner, depth + 1, seen))
+      .filter(Boolean);
+    if (errors.length > 0) serialized.errors = errors;
+  }
+  if (Object.keys(serialized).length === 0) {
+    const str = String(cause);
+    if (str !== "[object Object]") serialized.message = str;
+  }
+  return Object.keys(serialized).length > 0 ? serialized : undefined;
+}
+
 // Mask sensitive data in headers (DISABLED - keep full token for testing)
 function maskSensitiveHeaders(headers) {
   if (!headers) return {};
@@ -218,9 +246,12 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
     
     // 6. Log error
     logError(error, requestBody = null) {
+      const cause = serializeErrorCause(error?.cause);
       writeJsonFile(sessionPath, "6_error.json", {
         timestamp: new Date().toISOString(),
         error: error?.message || String(error),
+        ...(error?.code != null ? { code: error.code } : {}),
+        ...(cause ? { cause } : {}),
         stack: error?.stack,
         requestBody
       });

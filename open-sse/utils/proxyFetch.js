@@ -26,12 +26,37 @@ export function resetDirectDispatchersForTests() {
   proxyDispatchers.clear();
 }
 
+function collectErrorChain(error, maxDepth = 5) {
+  const nodes = [];
+  const seen = new Set();
+  const visit = (err, depth) => {
+    if (!err || typeof err !== "object" || depth > maxDepth || seen.has(err)) return;
+    seen.add(err);
+    nodes.push(err);
+    if (err.cause) visit(err.cause, depth + 1);
+    if (Array.isArray(err.errors)) {
+      for (const inner of err.errors.slice(0, 5)) {
+        visit(inner, depth + 1);
+      }
+    }
+  };
+  visit(error, 0);
+  return nodes;
+}
+
 export function isStaleSocketError(error) {
-  if (!error || error.name === "AbortError" || isTlsCertError(error)) return false;
-  const code = error?.cause?.code || error?.code || "";
-  if (NON_STALE_SOCKET_ERROR_CODES.has(code)) return false;
-  if (STALE_SOCKET_ERROR_CODES.has(code)) return true;
-  const msg = `${error?.message || ""} ${error?.cause?.message || ""}`.toLowerCase();
+  if (!error) return false;
+  const chain = collectErrorChain(error);
+  if (chain.some((node) => node.name === "AbortError" || TLS_CERT_ERRORS.has(node.code))) {
+    return false;
+  }
+  if (chain.some((node) => node.code && NON_STALE_SOCKET_ERROR_CODES.has(node.code))) {
+    return false;
+  }
+  if (chain.some((node) => node.code && STALE_SOCKET_ERROR_CODES.has(node.code))) {
+    return true;
+  }
+  const msg = chain.map((node) => node.message || "").join(" ").toLowerCase();
   return STALE_SOCKET_ERROR_SUBSTRINGS.some((sub) => msg.includes(sub));
 }
 
@@ -149,8 +174,7 @@ const TLS_CERT_ERRORS = new Set([
 ]);
 
 function isTlsCertError(err) {
-  const code = err?.cause?.code || err?.code;
-  return TLS_CERT_ERRORS.has(code);
+  return collectErrorChain(err).some((node) => node.code && TLS_CERT_ERRORS.has(node.code));
 }
 const MITM_BYPASS_HOSTS = [
   "cloudcode-pa.googleapis.com",
@@ -345,17 +369,19 @@ export function getFreshRetryDispatcher(insecure = false) {
 }
 
 /**
- * Create proxy or direct dispatcher lazily (undici-compatible).
- * Always returns a dispatcher — the direct path needs the custom Agent too,
- * otherwise the default global agent's ClientHello gets RST-ed by DPI.
+ * Create proxy dispatcher lazily with capped keep-alive TTL (or 1ms for fresh-socket retries).
  */
-async function getDispatcher(proxyUrl, insecure = false, forceFreshSocket = false) {
+export async function getProxyDispatcher(proxyUrl, insecure = false, forceFreshSocket = false) {
   const normalized = normalizeProxyUrl(proxyUrl);
-  if (!normalized) {
-    return forceFreshSocket ? getFreshRetryDispatcher(insecure) : getDirectDispatcher(insecure);
-  }
+  if (!normalized) return null;
 
-  const key = `${normalized}::${insecure ? "insecure" : "secure"}`;
+  const { keepAliveTimeout, keepAliveMaxTimeout } = forceFreshSocket
+    ? {
+        keepAliveTimeout: FRESH_RETRY_KEEPALIVE_TIMEOUT_MS,
+        keepAliveMaxTimeout: FRESH_RETRY_KEEPALIVE_TIMEOUT_MS,
+      }
+    : resolveKeepAliveTimeouts();
+  const key = `${normalized}::${insecure ? "insecure" : "secure"}::${forceFreshSocket ? "fresh" : "pooled"}::${keepAliveTimeout}::${keepAliveMaxTimeout}`;
   if (!proxyDispatchers.has(key)) {
     // Evict oldest entry if max size reached
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
@@ -366,11 +392,26 @@ async function getDispatcher(proxyUrl, insecure = false, forceFreshSocket = fals
       uri: normalized,
       connect: EYEBALLS_CONNECT,
       requestTls: { ecdhCurve: TLS_ECDH_CURVE, ...(insecure ? { rejectUnauthorized: false } : {}) },
+      keepAliveTimeout,
+      keepAliveMaxTimeout,
     });
     proxyDispatchers.set(key, dispatcher);
   }
 
   return proxyDispatchers.get(key);
+}
+
+/**
+ * Create proxy or direct dispatcher lazily (undici-compatible).
+ * Always returns a dispatcher — the direct path needs the custom Agent too,
+ * otherwise the default global agent's ClientHello gets RST-ed by DPI.
+ */
+async function getDispatcher(proxyUrl, insecure = false, forceFreshSocket = false) {
+  const normalized = normalizeProxyUrl(proxyUrl);
+  if (!normalized) {
+    return forceFreshSocket ? getFreshRetryDispatcher(insecure) : getDirectDispatcher(insecure);
+  }
+  return getProxyDispatcher(normalized, insecure, forceFreshSocket);
 }
 
 function isBodyReplaySafe(body) {
@@ -393,15 +434,31 @@ async function fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket = f
       // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
       const insecureDispatcher = await getDispatcher(proxyUrl, true, forceFreshSocket);
-      return await rawFetch(url, { ...options, dispatcher: insecureDispatcher });
+      try {
+        return await rawFetch(url, { ...options, dispatcher: insecureDispatcher });
+      } catch (insecureErr) {
+        if (
+          !forceFreshSocket
+          && (proxyUrl || !options.directFetch)
+          && !options.signal?.aborted
+          && isBodyReplaySafe(options.body)
+          && isFreshSocketReplayEnabled()
+          && isStaleSocketError(insecureErr)
+        ) {
+          dbg("FETCH", `stale keep-alive socket (${insecureErr.cause?.code || insecureErr.code || insecureErr.message}), retrying on fresh socket: ${url}`);
+          const freshInsecureDispatcher = await getDispatcher(proxyUrl, true, true);
+          return await rawFetch(url, { ...options, dispatcher: freshInsecureDispatcher });
+        }
+        throw insecureErr;
+      }
     }
 
     // Stale keep-alive recovery: a pooled socket died before returning headers. Replay
-    // once on the fresh-socket dispatcher instead of waiting out the connect timeout.
+    // once on the fresh-socket dispatcher (staying on proxy if proxyUrl is set)
+    // instead of waiting out the connect timeout or falling back to direct.
     if (
-      !proxyUrl
-      && !forceFreshSocket
-      && !options.directFetch
+      !forceFreshSocket
+      && (proxyUrl || !options.directFetch)
       && !options.signal?.aborted
       && isBodyReplaySafe(options.body)
       && isFreshSocketReplayEnabled()
@@ -516,8 +573,9 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       dbg("PROXY", `PROXY ROUTING VERIFIED | ${safeTargetHost(targetUrl)} | transport=adapter | proxy=${via || safeProxyHost(proxyUrl)} | status=${res?.status}`);
       return res;
     } catch (err) {
+      if (options?.signal?.aborted) throw err;
       if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${err.message}`);
+        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${err.message}`, { cause: err });
       }
       throw err;
     }
@@ -530,19 +588,26 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       try {
         return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
       } catch (proxyError) {
+        if (options?.signal?.aborted) throw proxyError;
         if (proxyOptions?.strictProxy === true) {
-          throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+          throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`, { cause: proxyError });
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
       }
     }
     // No proxy — manually resolve real IP to bypass DNS spoof
-    try {
-      const parsedUrl = new URL(targetUrl);
-      const realIP = await resolveRealIP(parsedUrl.hostname);
-      if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
-    } catch (error) {
-      console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
+    if (!options?.signal?.aborted) {
+      try {
+        const parsedUrl = new URL(targetUrl);
+        const realIP = await resolveRealIP(parsedUrl.hostname);
+        if (options?.signal?.aborted) {
+          throw options.signal.reason || Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+        }
+        if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
+      } catch (error) {
+        if (options?.signal?.aborted) throw error;
+        console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
+      }
     }
   }
 
@@ -550,9 +615,10 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     try {
       return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
     } catch (proxyError) {
+      if (options?.signal?.aborted) throw proxyError;
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`, { cause: proxyError });
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
       return fetchWithTlsFallback(url, options, null, forceFreshSocket);

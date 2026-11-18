@@ -392,9 +392,31 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Most executors return their registry format. Cursor AgentService is an
   // exception: it is decoded by the executor into OpenAI-compatible output.
   let providerResponseFormat = targetFormat;
-  const executeSignal = clientSignal
-    ? AbortSignal.any([streamController.signal, clientSignal])
-    : streamController.signal;
+  const activeSignals = [streamController?.signal, clientSignal].filter(Boolean);
+  const executeSignal = activeSignals.length === 0
+    ? undefined
+    : activeSignals.length === 1
+      ? activeSignals[0]
+      : AbortSignal.any(activeSignals);
+  let lastTargetRequest = null;
+  let targetRequestLogged = false;
+  const onTargetRequest = ({ url, headers, transformedBody }) => {
+    lastTargetRequest = { url, headers, transformedBody };
+    reqLogger.logTargetRequest?.(url, headers, transformedBody);
+    targetRequestLogged = true;
+  };
+  const logTargetIfChanged = (url, headers, transformedBody) => {
+    if (
+      !targetRequestLogged
+      || lastTargetRequest?.url !== url
+      || lastTargetRequest?.headers !== headers
+      || lastTargetRequest?.transformedBody !== transformedBody
+    ) {
+      lastTargetRequest = { url, headers, transformedBody };
+      reqLogger.logTargetRequest?.(url, headers, transformedBody);
+      targetRequestLogged = true;
+    }
+  };
   try {
     const result = await executor.execute({
       model,
@@ -407,6 +429,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       log,
       proxyOptions,
       providerOverrides,
+      onTargetRequest,
     });
     providerResponse = result.response;
     providerUrl = result.url;
@@ -417,26 +440,29 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (renamedToolNames?.size) {
       toolNameMap = new Map([...(toolNameMap || []), ...renamedToolNames]);
     }
-    reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
+    logTargetIfChanged(providerUrl, providerHeaders, finalBody);
   } catch (error) {
+    const isAborted = executeSignal?.aborted === true || clientSignal?.aborted === true || error?.name === "AbortError";
+    const targetBody = lastTargetRequest?.transformedBody || translatedBody || null;
     trackPendingRequest(model, provider, connectionId, false, true);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
+    appendRequestLog({ model, provider, connectionId, status: `FAILED ${isAborted ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
+    const errMsg = formatProviderError(error, provider, model, isAborted ? 499 : HTTP_STATUS.BAD_GATEWAY);
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
       request: extractRequestConfig(body, stream),
-      providerRequest: translatedBody || null,
-      response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
+      providerRequest: targetBody,
+      response: { error: isAborted ? (error?.message || "Request aborted") : errMsg, status: isAborted ? 499 : HTTP_STATUS.BAD_GATEWAY, thinking: null },
       pxpipe: pxpipeSummary,
       status: "error"
     })).catch(() => { });
+    reqLogger.logError?.(error, targetBody);
 
-    if (error.name === "AbortError" || clientSignal?.aborted) {
+    if (isAborted) {
       streamController.handleError(error);
       return createErrorResult(499, "Request aborted");
     }
-    const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     if (log?.errorLine) {
       log.errorLine(reqTag, "✗", `ERROR 502 · ${provider}/${model} · ${Date.now() - requestStartTime}ms\n    ${errMsg}${error.stack ? `\n    ${error.stack}` : ""}`);
     }
@@ -476,11 +502,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
             log,
             proxyOptions,
             providerOverrides,
+            onTargetRequest,
           });
           if (retryResult.response.ok) {
             providerResponse = retryResult.response;
             providerUrl = retryResult.url;
+            providerHeaders = retryResult.headers;
+            finalBody = retryResult.transformedBody;
             providerResponseFormat = retryResult.responseFormat || targetFormat;
+            logTargetIfChanged(providerUrl, providerHeaders, finalBody);
           }
         } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
       } else {

@@ -22,8 +22,10 @@ export default {
   transport: {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/models",
     format: "gemini",
+    timeoutMs: 180000,
     retry: {
       429: { attempts: 0 },
+      502: { attempts: 1, delayMs: 1000 },
       503: { attempts: 0 },
     },
     clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",

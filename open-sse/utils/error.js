@@ -139,12 +139,35 @@ export function unavailableResponse(statusCode, message, retryAfter, retryAfterH
  * @param {number|string} statusCode - HTTP status code or error code
  * @returns {string} Formatted error message
  */
+function describeCauseNode(node) {
+  if (!node || typeof node !== "object") return node != null ? String(node) : "";
+  const code = node.code;
+  let msg = node.message;
+  if ((!msg || msg === "") && Array.isArray(node.errors) && node.errors.length > 0) {
+    msg = node.errors
+      .slice(0, 3)
+      .map((inner) => [inner?.code, inner?.message].filter(Boolean).join(": "))
+      .filter(Boolean)
+      .join("; ");
+  }
+  return [code, msg].filter(Boolean).join(": ");
+}
+
 export function formatProviderError(error, provider, model, statusCode) {
-  const code = statusCode || error.code || "FETCH_FAILED";
-  const message = error.message || "Unknown error";
-  // Expose low-level cause (e.g. UND_ERR_SOCKET, ECONNRESET, ETIMEDOUT) for diagnosing fetch failures
-  const causeCode = error.cause?.code;
-  const causeMsg = error.cause?.message;
-  const causeStr = causeCode || causeMsg ? ` (cause: ${[causeCode, causeMsg].filter(Boolean).join(": ")})` : "";
+  const code = statusCode || error?.code || "FETCH_FAILED";
+  const message = error?.message || (typeof error === "string" && error) || "Unknown error";
+  // Expose low-level cause chain (e.g. UND_ERR_PRX_CONN -> UND_ERR_SOCKET, AggregateError)
+  const parts = [];
+  const seen = new Set();
+  let cur = error?.cause;
+  let depth = 0;
+  while (cur && depth < 4 && (typeof cur !== "object" || !seen.has(cur))) {
+    if (typeof cur === "object") seen.add(cur);
+    const part = describeCauseNode(cur);
+    if (part) parts.push(part);
+    cur = typeof cur === "object" ? cur.cause : null;
+    depth++;
+  }
+  const causeStr = parts.length > 0 ? ` (cause: ${parts.join(" -> ")})` : "";
   return `[${code}]: ${message}${causeStr}`;
 }

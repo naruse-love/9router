@@ -97,7 +97,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null, directFetch = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null, directFetch = null, onTargetRequest = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -109,8 +109,10 @@ export class BaseExecutor {
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
-    const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
-      const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
+    const tryRetry = async (urlIndex, statusKey, reason, response = null, maxAttemptsOverride = null) => {
+      const resolved = resolveRetryEntry(retryConfig[statusKey]);
+      const attempts = maxAttemptsOverride != null ? Math.min(resolved.attempts, maxAttemptsOverride) : resolved.attempts;
+      const { delayMs } = resolved;
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts) return false;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.
       let waitMs = delayMs;
@@ -121,7 +123,21 @@ export class BaseExecutor {
       }
       retryAttemptsByUrl[urlIndex]++;
       log?.debug?.("RETRY", `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts} after ${waitMs / 1000}s`);
-      await new Promise(resolve => setTimeout(resolve, waitMs));
+      if (waitMs > 0) {
+        await new Promise((resolve) => {
+          if (signal?.aborted) return resolve();
+          const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+          }, waitMs);
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
+        if (signal?.aborted) return false;
+      }
       return true;
     };
 
@@ -131,6 +147,7 @@ export class BaseExecutor {
       const headers = this.buildHeaders(credentials, stream, url, model, transformedBody);
       // User per-provider override wins over registry headers (blocked names filtered at the API)
       if (providerOverrides?.headers) Object.assign(headers, providerOverrides.headers);
+      onTargetRequest?.({ url, headers, transformedBody });
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
@@ -167,6 +184,11 @@ export class BaseExecutor {
           urlIndex--;
           continue;
         }
+        if (signal?.aborted) {
+          throw signal.reason instanceof Error
+            ? signal.reason
+            : Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+        }
 
         if (this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.("RETRY", `${response.status} on ${url}, trying fallback ${urlIndex + 1}`);
@@ -177,8 +199,11 @@ export class BaseExecutor {
         return { response, url, headers, transformedBody };
       } catch (error) {
         clearTimeout(connectTimer);
-        lastError = error;
-        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+        const isConnectTimeout = connectCtrl.signal.aborted && !signal?.aborted;
+        const normalizedError = (isConnectTimeout && error?.name === "AbortError")
+          ? Object.assign(new Error(error.message || "fetch connect timeout", { cause: error }), { code: error.code || "UND_ERR_CONNECT_TIMEOUT" })
+          : error;
+        lastError = normalizedError;
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
         // Connect timeout is internal — convert to retryable network error, don't propagate AbortError
         if (signal?.aborted) throw error;
@@ -186,17 +211,20 @@ export class BaseExecutor {
 
         // Map network/fetch exceptions to 502 retry config; force a fresh socket on retry
         // so a silently-dropped keep-alive socket is never reused from the pool.
-        if (await tryRetry(urlIndex, HTTP_STATUS.BAD_GATEWAY, `network "${error.message}"`)) {
+        // Cap header-timeout retries at 1 fresh-socket attempt so long-timeout providers (e.g. 180s)
+        // never stall 4x in a row.
+        if (await tryRetry(urlIndex, HTTP_STATUS.BAD_GATEWAY, `network "${normalizedError.message}"`, null, isConnectTimeout ? 1 : null)) {
           forceFreshSocketByUrl[urlIndex] = true;
           urlIndex--;
           continue;
         }
+        if (signal?.aborted) throw normalizedError;
 
         if (urlIndex + 1 < fallbackCount) {
           log?.debug?.("RETRY", `Error on ${url}, trying fallback ${urlIndex + 1}`);
           continue;
         }
-        throw error;
+        throw normalizedError;
       }
     }
 
