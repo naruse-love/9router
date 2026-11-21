@@ -263,8 +263,8 @@ describe("Gemini rotation end-to-end across chat endpoints & /v1beta native endp
     );
     expect(badRes.status).toBe(400);
     expect(seen).toEqual(["gem-key-1"]);
-    // Cursor stays "3"
-    expect(getGeminiRotationCursor("gemini")).toBe("3");
+    // Cursor advances to "1" regardless of failure
+    expect(getGeminiRotationCursor("gemini")).toBe("1");
   });
 
   it("chat endpoint stops immediately and returns 499 when client aborts during 30s wait or during upstream fetch", async () => {

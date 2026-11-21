@@ -8,7 +8,7 @@ import {
 } from "./geminiCredentials.js";
 
 /**
- * In-memory per-provider cursor storing the ID of the last successful connection.
+ * In-memory per-provider cursor storing the ID of the last dispatched/attempted connection.
  * Anchored on globalThis via Symbol.for so separate Next.js route chunks / HMR reloads
  * share the same cursor within a process, while still resetting on process restart.
  */
@@ -27,14 +27,14 @@ export function resetGeminiRotationCursors() {
   cursors.clear();
 }
 
-export function orderFromCursor(connections, lastSuccessId) {
+export function orderFromCursor(connections, cursorId) {
   if (!Array.isArray(connections) || connections.length === 0) return [];
   const sorted = [...connections].sort(
     (a, b) => (a?.priority ?? 999) - (b?.priority ?? 999)
   );
-  if (!lastSuccessId) return sorted;
+  if (!cursorId) return sorted;
 
-  const idx = sorted.findIndex((c) => c?.id === lastSuccessId);
+  const idx = sorted.findIndex((c) => c?.id === cursorId);
   if (idx === -1) return sorted;
 
   return [...sorted.slice(idx + 1), ...sorted.slice(0, idx + 1)];
@@ -112,6 +112,12 @@ export async function runGeminiRotation({
   const orderedIds = orderFromCursor(initialConns, cursorId).map((c) => c.id);
   const initialById = new Map(initialConns.map((c) => [c.id, c]));
 
+  // Advance cursor immediately on dispatch so concurrent and subsequent requests
+  // rotate to the next account regardless of whether this attempt succeeds or fails.
+  if (orderedIds.length > 0) {
+    cursors.set(providerId, orderedIds[0]);
+  }
+
   let lastFailure = null;
 
   for (let cycle = 0; cycle < cycles; cycle++) {
@@ -134,6 +140,7 @@ export async function runGeminiRotation({
       }
 
       const conn = cycleConns[i];
+      cursors.set(providerId, conn.id);
       const connLabel = getSafeConnLabel(conn);
       const credentials = await buildCredentials(conn);
 

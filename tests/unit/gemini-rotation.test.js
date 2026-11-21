@@ -252,7 +252,7 @@ describe("runGeminiRotation core state machine", () => {
     // 9 attempts -> 8 waits of 30000ms (no wait after 9th attempt)
     expect(sleepCalls).toEqual(Array(8).fill(30000));
     expect(onError).toHaveBeenCalledTimes(9);
-    expect(getGeminiRotationCursor("gemini")).toBeNull();
+    expect(getGeminiRotationCursor("gemini")).toBe("C");
   });
 
   it("switches immediately (0 sleep) on 401/403/500/502/504/400(API_KEY_INVALID)", async () => {
@@ -323,7 +323,7 @@ describe("runGeminiRotation core state machine", () => {
     expect(attempted).toEqual(["A"]);
     expect(sleep).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
-    expect(getGeminiRotationCursor("gemini")).toBeNull();
+    expect(getGeminiRotationCursor("gemini")).toBe("A");
   });
 
   it("advances shared cursor across models on success, preserves cursor on failure, and recovers to #1 if cursor disappears", async () => {
@@ -457,7 +457,7 @@ describe("runGeminiRotation core state machine", () => {
     });
     expect(res3).toEqual({ status: "aborted" });
     expect(onError).not.toHaveBeenCalled();
-    expect(getGeminiRotationCursor("gemini")).toBeNull();
+    expect(getGeminiRotationCursor("gemini")).toBe("B");
   });
 
   it("re-reads fresh connection state on cycle 2+ (skips disabled account and passes updated DB row to onSuccess)", async () => {
@@ -554,7 +554,7 @@ describe("runGeminiRotation core state machine", () => {
 
     expect(outcome.status).toBe("aborted");
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(getGeminiRotationCursor("gemini")).toBeNull();
+    expect(getGeminiRotationCursor("gemini")).toBe("A");
   });
 
   it("treats status 499 from attempt as aborted even when outer signal is not aborted", async () => {
@@ -575,7 +575,7 @@ describe("runGeminiRotation core state machine", () => {
     expect(outcome).toEqual({ status: "aborted" });
     expect(attempt).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
-    expect(getGeminiRotationCursor("gemini")).toBeNull();
+    expect(getGeminiRotationCursor("gemini")).toBe("A");
   });
 
   it("BaseExecutor aborts immediately on custom non-AbortError signal reason without 502 retry", async () => {
@@ -598,5 +598,79 @@ describe("runGeminiRotation core state machine", () => {
     ).rejects.toThrow("socket hang up");
 
     expect(proxyFetchMocks.proxyAwareFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rotates unconditionally across 8 accounts regardless of success or failure (Round-Robin)", async () => {
+    const conns = Array.from({ length: 8 }, (_, i) => makeConn(`conn-${i + 1}`, i + 1));
+    const dispatched = [];
+
+    // Simulate 16 requests (2 full rounds over 8 accounts) with mixed outcomes:
+    // req 1: ok
+    // req 2: fail 500
+    // req 3: ok
+    // req 4: fail 400
+    // req 5: fail 503
+    // ...
+    for (let r = 0; r < 16; r++) {
+      const outcome = await runGeminiRotation({
+        listConnections: async () => conns,
+        buildCredentials: async (c) => ({ connectionId: c.id }),
+        sleep: async () => true,
+        onError: async () => {},
+        attempt: async (creds) => {
+          dispatched.push(creds.connectionId);
+          // Even requests fail, odd requests succeed
+          if (r % 2 === 0) {
+            return { ok: false, status: 500, errorText: "fail", requestScoped: true };
+          }
+          return { ok: true, response: new Response("ok", { status: 200 }) };
+        },
+      });
+    }
+
+    // Every single request must dispatch to the next account in sequence 1..8 then 1..8
+    expect(dispatched).toEqual([
+      "conn-1", "conn-2", "conn-3", "conn-4", "conn-5", "conn-6", "conn-7", "conn-8",
+      "conn-1", "conn-2", "conn-3", "conn-4", "conn-5", "conn-6", "conn-7", "conn-8",
+    ]);
+  });
+
+  it("advances to next account on subsequent request when previous account encounters 429", async () => {
+    const conns = [makeConn("A", 1), makeConn("B", 2), makeConn("C", 3)];
+    const callLog = [];
+
+    // Req 1: A fails with 429, falls over to B which succeeds
+    const res1 = await runGeminiRotation({
+      listConnections: async () => conns,
+      buildCredentials: async (c) => ({ connectionId: c.id }),
+      sleep: async () => true,
+      onError: async () => {},
+      attempt: async (creds) => {
+        callLog.push(`req1:${creds.connectionId}`);
+        if (creds.connectionId === "A") {
+          return { ok: false, status: 429, errorText: "rate limited" };
+        }
+        return { ok: true, response: new Response("ok", { status: 200 }) };
+      },
+    });
+    expect(res1.status).toBe("ok");
+    expect(callLog).toEqual(["req1:A", "req1:B"]);
+    expect(getGeminiRotationCursor("gemini")).toBe("B");
+
+    // Req 2: must immediately start with C (skipping A which was 429 and B which was just used)
+    callLog.length = 0;
+    const res2 = await runGeminiRotation({
+      listConnections: async () => conns,
+      buildCredentials: async (c) => ({ connectionId: c.id }),
+      sleep: async () => true,
+      onError: async () => {},
+      attempt: async (creds) => {
+        callLog.push(`req2:${creds.connectionId}`);
+        return { ok: true, response: new Response("ok", { status: 200 }) };
+      },
+    });
+    expect(res2.status).toBe("ok");
+    expect(callLog).toEqual(["req2:C"]);
+    expect(getGeminiRotationCursor("gemini")).toBe("C");
   });
 });
