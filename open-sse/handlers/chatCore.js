@@ -16,6 +16,7 @@ import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
 import { buildRequestDetail, extractRequestConfig } from "./chatCore/requestDetail.js";
+import { formatThinkingSummary } from "./chatCore/providerThinkingSummary.js";
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import { handleStreamingResponse, buildOnStreamComplete } from "./chatCore/streamingHandler.js";
@@ -61,7 +62,16 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, clientSignal = null }) {
+function emitChatStatus(onStatus, payload) {
+  if (typeof onStatus !== "function") return;
+  try {
+    onStatus(payload);
+  } catch {
+    // Status callbacks must not disrupt request execution
+  }
+}
+
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, clientSignal = null, onStatus = null }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -242,24 +252,40 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const finalFormat = passthrough ? sourceFormat : targetFormat;
 
   // Request line: one correlated summary (fmt + thinking + counts + account)
-  if (log?.line) {
+  const hasLineLog = typeof log?.line === "function";
+  const hasStatusCallback = typeof onStatus === "function";
+  if (hasLineLog || hasStatusCallback) {
     const clientModel = clientRawRequest?.body?.model || `${provider}/${model}`;
     const msgN = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || body.messages?.length || body.input?.length || 0;
     const toolN = translatedBody.tools?.length || body.tools?.length || 0;
     const fmtStr = passthrough ? `FMT: ${sourceFormat} (passthrough)` : `FMT: ${sourceFormat}→${targetFormat}`;
     const showThinking = provider !== "grok-cli" || supportsGrokCliReasoningEffort(model);
-    const think = showThinking ? log.fmtThink?.(extractThinking(translatedBody)) : null;
+    const think = showThinking
+      ? (log?.fmtThink ? log.fmtThink(extractThinking(translatedBody)) : formatThinkingSummary(extractThinking(translatedBody)))
+      : null;
     const acc = credentials?.connectionName || credentials?.connectionId?.slice(0, 8) || "-";
-    const parts = [
-      `POST ${clientModel} → ${provider}/${model}`,
-      fmtStr,
-      stream ? "STREAM" : "JSON",
-      `${msgN} MSG`,
-    ];
-    if (toolN) parts.push(`${toolN} TOOL`);
-    if (think) parts.push(`THINK:${think}`);
-    parts.push(`ACC:${acc}`);
-    log.line(reqTag, "▶", parts.join(" · "));
+    if (hasLineLog) {
+      const parts = [
+        `POST ${clientModel} → ${provider}/${model}`,
+        fmtStr,
+        stream ? "STREAM" : "JSON",
+        `${msgN} MSG`,
+      ];
+      if (toolN) parts.push(`${toolN} TOOL`);
+      if (think) parts.push(`THINK:${think}`);
+      parts.push(`ACC:${acc}`);
+      log.line(reqTag, "▶", parts.join(" · "));
+    }
+    emitChatStatus(onStatus, {
+      phase: "posting",
+      provider,
+      model,
+      account: acc,
+      format: fmtStr,
+      thinking: think || null,
+      msgCount: msgN,
+      toolCount: toolN,
+    });
   }
 
   // TTS models don't support tool messages/function calling
@@ -466,6 +492,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (log?.errorLine) {
       log.errorLine(reqTag, "✗", `ERROR 502 · ${provider}/${model} · ${Date.now() - requestStartTime}ms\n    ${errMsg}${error.stack ? `\n    ${error.stack}` : ""}`);
     }
+    emitChatStatus(onStatus, {
+      phase: "upstream_error",
+      provider,
+      model,
+      account: credentials?.connectionName || credentials?.connectionId?.slice(0, 8),
+      statusCode: HTTP_STATUS.BAD_GATEWAY,
+      durationMs: Date.now() - requestStartTime,
+      error: String(errMsg || "").slice(0, 200),
+    });
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
   }
 
@@ -543,6 +578,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       log.errorLine(reqTag, "✗", `ERROR ${statusCode} · ${provider}/${model} · ${Date.now() - requestStartTime}ms${urlStr}\n    ${errMsg}`);
     }
     reqLogger.logError(new Error(message), finalBody || translatedBody);
+    emitChatStatus(onStatus, {
+      phase: "upstream_error",
+      provider,
+      model,
+      account: credentials?.connectionName || credentials?.connectionId?.slice(0, 8),
+      statusCode,
+      durationMs: Date.now() - requestStartTime,
+      error: String(errMsg || "").slice(0, 200),
+    });
     return createErrorResult(statusCode, errMsg, resetsAtMs, upstreamResponseHeaders(providerResponse.headers));
   }
 
@@ -567,8 +611,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Streaming response
-  const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
-  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, credentials });
+  const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx, credentials, onStatus });
+  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat: providerResponseFormat, userAgent, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, credentials, onStatus });
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

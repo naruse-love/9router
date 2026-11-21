@@ -45,10 +45,19 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
   return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey, toolNameMap);
 }
 
+function emitStreamStatus(onStatus, payload) {
+  if (typeof onStatus !== "function") return;
+  try {
+    onStatus(payload);
+  } catch {
+    // Status callbacks must not disrupt streaming
+  }
+}
+
 /**
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
-export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, pxpipe, reqTag, log, credentials }) {
+export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, streamController, onStreamComplete, streamDetailId, pxpipe, reqTag, log, credentials, onStatus = null }) {
   if (onRequestSuccess) {
     Promise.resolve()
       .then(onRequestSuccess)
@@ -83,6 +92,14 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
       }),
     };
   }
+
+  emitStreamStatus(onStatus, {
+    phase: "streaming",
+    provider,
+    model,
+    account: credentials?.connectionName || credentials?.connectionId?.slice(0, 8),
+    connectMs: Date.now() - requestStartTime,
+  });
 
   const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, customToolNames, model, connectionId, body, onStreamComplete, apiKey, credentials });
 
@@ -120,7 +137,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log }) {
+export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log, credentials = null, onStatus = null }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt) => {
@@ -148,6 +165,17 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE", silent: true });
     if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency }));
+    emitStreamStatus(onStatus, {
+      phase: "done",
+      provider,
+      model,
+      account: credentials?.connectionName || credentials?.connectionId?.slice(0, 8),
+      ttftMs: latency.ttft,
+      totalMs: latency.total,
+      promptTokens: usage?.prompt_tokens ?? usage?.input_tokens ?? 0,
+      completionTokens: usage?.completion_tokens ?? usage?.output_tokens ?? 0,
+      cachedTokens: usage?.cached_tokens ?? usage?.cache_read_input_tokens ?? usage?.prompt_tokens_details?.cached_tokens ?? 0,
+    });
   };
 
   return { onStreamComplete, streamDetailId };

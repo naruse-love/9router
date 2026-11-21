@@ -73,6 +73,15 @@ function logEvent(log, level, message, data) {
   }
 }
 
+function emitStatus(onStatus, payload) {
+  if (typeof onStatus !== "function") return;
+  try {
+    onStatus(payload);
+  } catch {
+    // Status callbacks must never interrupt rotation
+  }
+}
+
 export async function runGeminiRotation({
   providerId = GEMINI_ROTATION.providerId,
   model = null,
@@ -88,6 +97,7 @@ export async function runGeminiRotation({
   cycles = GEMINI_ROTATION.cycles,
   waitStatuses = GEMINI_ROTATION.waitStatuses,
   log = null,
+  onStatus = null,
 }) {
   if (signal?.aborted) {
     return { status: "aborted" };
@@ -131,6 +141,17 @@ export async function runGeminiRotation({
         return { status: "aborted" };
       }
 
+      emitStatus(onStatus, {
+        phase: "attempt",
+        provider: providerId,
+        model,
+        account: connLabel,
+        cycle: cycle + 1,
+        totalCycles: cycles,
+        accountIndex: i + 1,
+        totalAccounts: cycleConns.length,
+      });
+
       let result;
       try {
         result = await attempt(credentials, {
@@ -168,6 +189,14 @@ export async function runGeminiRotation({
           connection: connLabel,
           model,
         });
+        emitStatus(onStatus, {
+          phase: "succeeded",
+          provider: providerId,
+          model,
+          account: connLabel,
+          cycle: cycle + 1,
+          totalCycles: cycles,
+        });
         return {
           status: "ok",
           response: result.response,
@@ -194,6 +223,14 @@ export async function runGeminiRotation({
         logEvent(log, "warn", `Request-scoped error ${failureStatus}, aborting rotation`, {
           connectionId: conn.id,
           model,
+        });
+        emitStatus(onStatus, {
+          phase: "request_error",
+          provider: providerId,
+          model,
+          account: connLabel,
+          statusCode: failureStatus,
+          error: String(failureText || "").slice(0, 200),
         });
         return {
           status: "requestError",
@@ -233,6 +270,20 @@ export async function runGeminiRotation({
           `Account ${connLabel} returned ${failureStatus} (cycle ${cycle + 1}/${cycles}, #${i + 1}/${cycleConns.length}), waiting ${waitMs}ms before next account`,
           { connectionId: conn.id, model, status: failureStatus }
         );
+        emitStatus(onStatus, {
+          phase: "waiting",
+          provider: providerId,
+          model,
+          account: connLabel,
+          statusCode: failureStatus,
+          cycle: cycle + 1,
+          totalCycles: cycles,
+          accountIndex: i + 1,
+          totalAccounts: cycleConns.length,
+          waitMs,
+          nextRetryAt: Date.now() + waitMs,
+          error: String(failureText || "").slice(0, 200),
+        });
         const completedSleep = await sleep(waitMs, signal);
         if (!completedSleep || signal?.aborted) {
           logEvent(log, "info", "Client disconnected during wait, aborting rotation", {
@@ -248,6 +299,18 @@ export async function runGeminiRotation({
           `Account ${connLabel} returned ${failureStatus} (cycle ${cycle + 1}/${cycles}, #${i + 1}/${cycleConns.length}), switching immediately`,
           { connectionId: conn.id, model, status: failureStatus }
         );
+        emitStatus(onStatus, {
+          phase: "switching",
+          provider: providerId,
+          model,
+          account: connLabel,
+          statusCode: failureStatus,
+          cycle: cycle + 1,
+          totalCycles: cycles,
+          accountIndex: i + 1,
+          totalAccounts: cycleConns.length,
+          error: String(failureText || "").slice(0, 200),
+        });
       }
     }
   }
@@ -259,6 +322,14 @@ export async function runGeminiRotation({
   logEvent(log, "warn", `All ${cycles} rotation cycles exhausted`, {
     model,
     lastStatus: lastFailure.httpStatus,
+  });
+
+  emitStatus(onStatus, {
+    phase: "exhausted",
+    provider: providerId,
+    model,
+    statusCode: lastFailure.httpStatus,
+    error: String(lastFailure.errorText || "").slice(0, 200),
   });
 
   return {

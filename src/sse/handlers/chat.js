@@ -30,6 +30,7 @@ import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../s
 import { resolveSmartChoice } from "../services/systemoneRouter.js";
 import { resolveProviderId } from "@/shared/constants/providers";
 import { isGeminiRotationProvider, runGeminiRotation } from "../services/geminiRotation.js";
+import { wantsStreamStatus, createImmediateStatusStreamResponse } from "../utils/streamStatusEmitter.js";
 
 /**
  * Handle chat completion request
@@ -110,93 +111,113 @@ export async function handleChat(request, clientRawRequest = null) {
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
-  const requiredCapabilities = detectRequiredCapabilities(body);
+  const executeChat = async ({ onStatus = null, signal = request?.signal || null } = {}) => {
+    const requiredCapabilities = detectRequiredCapabilities(body);
 
-  // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
-  if (comboModels) {
-    // Check for combo-specific strategy first, fallback to global
-    const comboStrategies = settings.comboStrategies || {};
-    const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
-    const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const augmentedModels = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings), comboModels);
-    const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
+    // Check if model is a combo (has multiple models with fallback)
+    const comboModels = await getComboModels(modelStr);
+    if (comboModels) {
+      // Check for combo-specific strategy first, fallback to global
+      const comboStrategies = settings.comboStrategies || {};
+      const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
+      const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
+      const augmentedModels = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings), comboModels);
+      const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
 
-    if (comboStrategy === "fusion") {
-      log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
-      return handleFusionChat({
+      if (comboStrategy === "fusion") {
+        log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
+        return handleFusionChat({
+          body,
+          models: comboModels,
+          handleSingleModel: (b, m, isPanel) => {
+            let cleanRawReq = clientRawRequest;
+            if (isPanel && clientRawRequest) {
+              const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
+              cleanRawReq = { ...clientRawRequest, body: cleanBody };
+            }
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, null, onStatus, signal);
+          },
+          log,
+          comboName: modelStr,
+          judgeModel: comboStrategies[modelStr]?.judgeModel,
+          tuning: comboStrategies[modelStr]?.fusionTuning,
+        });
+      }
+
+      const comboStickyLimit = settings.comboStickyRoundRobinLimit;
+      const comboCfg = comboStrategies[modelStr] || {};
+      log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+      return handleComboChat({
         body,
-        models: comboModels,
-        handleSingleModel: (b, m, isPanel) => {
-          let cleanRawReq = clientRawRequest;
-          if (isPanel && clientRawRequest) {
-            const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
-            cleanRawReq = { ...clientRawRequest, body: cleanBody };
-          }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
-        },
+        models: augmentedModels,
+        handleSingleModel: withCapacityAdapterStripping(
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, onStatus, signal),
+          adapterAdded
+        ),
         log,
         comboName: modelStr,
-        judgeModel: comboStrategies[modelStr]?.judgeModel,
-        tuning: comboStrategies[modelStr]?.fusionTuning,
+        comboStrategy,
+        comboStickyLimit,
+        sessionId,
+        smartPolicy: comboCfg.smartPolicy || "smart",
+        sessionSticky: comboCfg.sessionSticky !== false,
+        confidenceThreshold: typeof comboCfg.confidenceThreshold === "number" ? comboCfg.confidenceThreshold : 0.8,
+        resolveSmartChoice: comboStrategy === "smart"
+          ? (b, m) => resolveSmartChoice({
+              body: b,
+              models: m,
+              routerModel: comboCfg.routerModel,
+              log,
+            })
+          : null,
       });
     }
 
-    const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const comboCfg = comboStrategies[modelStr] || {};
-    log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
+    // Single model request — may still switch to a capacity-adapter model if the
+    // target lacks a capability the request needs (e.g. no vision, request has an image).
+    const soloAugmented = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings), [modelStr]);
+    if (soloAugmented.length > 1) {
+      const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
+      log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
+      return handleComboChat({
+        body,
+        models: soloAugmented,
+        handleSingleModel: withCapacityAdapterStripping(
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, onStatus, signal),
+          adapterAdded
+        ),
+        log,
+        comboName: modelStr,
+        comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
+      });
+    }
+
+    return handleSingleModelChat(
       body,
-      models: augmentedModels,
-      handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
-        adapterAdded
-      ),
-      log,
-      comboName: modelStr,
-      comboStrategy,
-      comboStickyLimit,
-      sessionId,
-      smartPolicy: comboCfg.smartPolicy || "smart",
-      sessionSticky: comboCfg.sessionSticky !== false,
-      confidenceThreshold: typeof comboCfg.confidenceThreshold === "number" ? comboCfg.confidenceThreshold : 0.8,
-      resolveSmartChoice: comboStrategy === "smart"
-        ? (b, m) => resolveSmartChoice({
-            body: b,
-            models: m,
-            routerModel: comboCfg.routerModel,
-            log,
-          })
-        : null,
+      modelStr,
+      clientRawRequest,
+      request,
+      apiKey,
+      contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null,
+      onStatus,
+      signal
+    );
+  };
+
+  if (wantsStreamStatus(request, body)) {
+    return createImmediateStatusStreamResponse({
+      signal: request?.signal || null,
+      run: async ({ emitStatus, signal }) => executeChat({ onStatus: emitStatus, signal }),
     });
   }
 
-  // Single model request — may still switch to a capacity-adapter model if the
-  // target lacks a capability the request needs (e.g. no vision, request has an image).
-  const soloAugmented = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings), [modelStr]);
-  if (soloAugmented.length > 1) {
-    const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
-    log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
-    return handleComboChat({
-      body,
-      models: soloAugmented,
-      handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
-        adapterAdded
-      ),
-      log,
-      comboName: modelStr,
-      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
-    });
-  }
-
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null);
+  return executeChat();
 }
 
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null, onStatus = null, signal = request?.signal || null) {
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -226,7 +247,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, null, onStatus, signal);
           },
           log,
           comboName: modelStr,
@@ -244,7 +265,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, onStatus, signal),
           adapterAdded
         ),
         log,
@@ -275,6 +296,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
+  const effectiveSignal = signal ?? request?.signal ?? null;
 
   const runChatCore = async (credentials, { skipClearAccountError = false } = {}) => {
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -323,7 +345,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       providerOverrides: (chatSettings.providerOverrides || {})[provider] || null,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
-      clientSignal: request?.signal || null,
+      clientSignal: effectiveSignal,
+      onStatus,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
@@ -347,8 +370,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const outcome = await runGeminiRotation({
       providerId: resolvedProvider,
       model,
-      signal: request?.signal || null,
+      signal: effectiveSignal,
       log,
+      onStatus,
       attempt: async (credentials) => {
         const { result } = await runChatCore(credentials, { skipClearAccountError: true });
         if (result.success) {
@@ -389,6 +413,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastHeaders = null;
 
   while (true) {
+    if (effectiveSignal?.aborted) {
+      return errorResponse(499, "Client closed request");
+    }
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
 
     // All accounts unavailable
@@ -410,6 +437,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const { result, refreshedCredentials } = await runChatCore(credentials);
 
     if (result.success) return result.response;
+    if (result.status === 499 || effectiveSignal?.aborted) {
+      return result.response || errorResponse(499, "Client closed request");
+    }
 
     // Antigravity 409/429: refresh live quota to get exact resetAt before locking
     let quotaResetMs = null;
@@ -430,6 +460,20 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (shouldFallback) {
       log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} UNAVAILABLE (${result.status}) → NEXT ACCOUNT`);
+      if (typeof onStatus === "function") {
+        try {
+          onStatus({
+            phase: "fallback",
+            provider,
+            model,
+            account: credentials.connectionName || credentials.connectionId?.slice(0, 8),
+            statusCode: result.status,
+            error: String(result.error || "").slice(0, 200),
+          });
+        } catch {
+          // Status callbacks must not disrupt fallback
+        }
+      }
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
       lastStatus = result.status;
